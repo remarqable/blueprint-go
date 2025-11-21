@@ -63,8 +63,8 @@ Create these files (see detailed sections below):
 - `internal/platform/db/db.go` → § Database Setup
 - `internal/platform/logger/logger.go` → § Logging
 - `internal/platform/config/config.go` → § Configuration
-- `internal/platform/i18n/i18n.go` → [reference/i18n.md](reference/i18n.md)
-- `internal/platform/auth/session.go` → [reference/auth.md](reference/auth.md)
+- `internal/platform/i18n/i18n.go` → [patterns/i18n.md](patterns/i18n.md)
+- `internal/platform/auth/session.go` → [patterns/auth.md](patterns/auth.md)
 
 ✅ **Verify:** Files exist, no import errors
 
@@ -105,8 +105,8 @@ make run  # or: go run ./cmd/yourapp
 1. [Database Setup](#database-setup) - Connection, migrations
 2. [Configuration](#configuration) - Environment variables
 3. [Logging](#logging) - Structured logging
-4. [Internationalization](#internationalization) → [reference/i18n.md](reference/i18n.md)
-5. [Sessions & Auth](#sessions--auth) → [reference/auth.md](reference/auth.md)
+4. [Internationalization](#internationalization) → [patterns/i18n.md](patterns/i18n.md)
+5. [Sessions & Auth](#sessions--auth) → [patterns/auth.md](patterns/auth.md)
 6. [Error Handling](#error-handling) - Standardized errors
 
 ### MVC Pattern
@@ -115,25 +115,25 @@ make run  # or: go run ./cmd/yourapp
 - [Controllers](#controllers) - Thin HTTP handlers
 
 ### Features (Cross-referenced)
-- [HTMX Patterns](#htmx-patterns) → [reference/htmx.md](reference/htmx.md)
-- [Frontend Architecture](#frontend-architecture) → [reference/frontend.md](reference/frontend.md)
-- [Multi-Tenancy](#multi-tenancy) → [reference/database.md](reference/database.md#multi-tenancy-with-row-level-security)
-- [Security](#security) → [reference/security.md](reference/security.md)
+- [HTMX Patterns](#htmx-patterns) → [patterns/htmx.md](patterns/htmx.md)
+- [Frontend Architecture](#frontend-architecture) → [patterns/frontend.md](patterns/frontend.md)
+- [Multi-Tenancy](#multi-tenancy) → [patterns/database.md](patterns/database.md#multi-tenancy-with-row-level-security)
+- [Security](#security) → [patterns/security.md](patterns/security.md)
 
 ### Operations
-- [Testing](#testing) → [reference/testing.md](reference/testing.md)
-- [Deployment](#deployment) → [reference/deployment.md](reference/deployment.md)
+- [Testing](#testing) → [patterns/testing.md](patterns/testing.md)
+- [Deployment](#deployment) → [patterns/deployment.md](patterns/deployment.md)
 
-### Reference Documentation
-- [MVC Pattern Guide](reference/mvc.md) - Models, Views, Controllers in detail
-- [Database Patterns](reference/database.md) - JSONB, FTS, RLS, indexes
-- [i18n Guide](reference/i18n.md) - Complete internationalization
-- [Auth & Sessions](reference/auth.md) - Magic links, OAuth, JWT
-- [HTMX Cookbook](reference/htmx.md) - Interactive patterns
-- [Frontend Guide](reference/frontend.md) - Bootstrap + HTMX
-- [Testing Guide](reference/testing.md) - Unit + integration tests
-- [Security Guide](reference/security.md) - CSRF, rate limiting, security checklist
-- [Deployment Guide](reference/deployment.md) - Production deployment
+### Pattern Guides
+- [MVC Pattern Guide](patterns/mvc.md) - Models, Views, Controllers in detail
+- [Database Patterns](patterns/database.md) - JSONB, FTS, RLS, indexes
+- [i18n Guide](patterns/i18n.md) - Complete internationalization
+- [Auth & Sessions](patterns/auth.md) - Magic links, OAuth, JWT
+- [HTMX Cookbook](patterns/htmx.md) - Interactive patterns
+- [Frontend Guide](patterns/frontend.md) - Bootstrap + HTMX
+- [Testing Guide](patterns/testing.md) - Unit + integration tests
+- [Security Guide](patterns/security.md) - CSRF, rate limiting, security checklist
+- [Deployment Guide](patterns/deployment.md) - Production deployment
 
 ---
 
@@ -224,19 +224,16 @@ yourapp/
 │   └── demo_data.sql            # Demo data for tests/dev
 ├── config/
 │   └── local.env.example
-├── reference/                   # Blueprint documentation (copy to new projects)
-│   ├── reference/
-│   │   ├── mvc.md               # Models, Views, Controllers guide
-│   │   ├── database.md          # JSONB, FTS, RLS, indexes
-│   │   ├── i18n.md              # Internationalization
-│   │   ├── auth.md              # Magic links, OAuth, JWT
-│   │   ├── htmx.md              # HTMX patterns
-│   │   ├── frontend.md          # Bootstrap + HTMX
-│   │   ├── testing.md           # Testing patterns
-│   │   ├── security.md          # Security checklist
-│   │   └── deployment.md        # Production deployment
-│   └── examples/
-│       └── (reference implementations)
+├── patterns/                    # Architecture & coding standards
+│   ├── mvc.md                   # Models, Views, Controllers guide
+│   ├── database.md              # JSONB, FTS, RLS, indexes
+│   ├── i18n.md                  # Internationalization
+│   ├── auth.md                  # Magic links, OAuth, JWT
+│   ├── htmx.md                  # HTMX patterns
+│   ├── frontend.md              # Bootstrap + HTMX
+│   ├── testing.md               # Testing patterns
+│   ├── security.md              # Security checklist
+│   └── deployment.md            # Production deployment
 ├── Makefile
 ├── Dockerfile
 ├── README.md
@@ -321,7 +318,7 @@ func WithTimeout(ctx context.Context, d time.Duration) (context.Context, context
 - All tables have `created_at`, `updated_at`
 
 → **For complete guide** (migrations, transactions, JSONB, FTS, indexes, multi-tenancy):
-See [reference/database.md](reference/database.md)
+See [patterns/database.md](patterns/database.md)
 
 ---
 
@@ -437,13 +434,13 @@ func FromContext(c *gin.Context) *zerolog.Logger {
 
 ## Internationalization
 
-→ **See complete guide:** [reference/i18n.md](reference/i18n.md)
+→ **See complete guide:** [patterns/i18n.md](patterns/i18n.md)
 
 ---
 
 ## Sessions & Auth
 
-→ **See complete guide:** [reference/auth.md](reference/auth.md)
+→ **See complete guide:** [patterns/auth.md](patterns/auth.md)
 
 ---
 
@@ -501,25 +498,25 @@ func (e *AppError) HTTPStatus() int {
 
 ## Models
 
-→ **See complete guide:** [reference/mvc.md](reference/mvc.md#models-fat-models)
+→ **See complete guide:** [patterns/mvc.md](patterns/mvc.md#models-fat-models)
 
 ---
 
 ## Controllers
 
-→ **See complete guide:** [reference/mvc.md](reference/mvc.md#controllers-thin-controllers)
+→ **See complete guide:** [patterns/mvc.md](patterns/mvc.md#controllers-thin-controllers)
 
 ---
 
 ## Views
 
-→ **See complete guide:** [reference/mvc.md](reference/mvc.md#views-templates)
+→ **See complete guide:** [patterns/mvc.md](patterns/mvc.md#views-templates)
 
 ---
 
 ## HTMX Patterns
 
-→ **See complete guide:** [reference/htmx.md](reference/htmx.md)
+→ **See complete guide:** [patterns/htmx.md](patterns/htmx.md)
 
 ---
 
@@ -536,7 +533,7 @@ func (e *AppError) HTTPStatus() int {
 - ✅ Progressive enhancement (works without JS)
 
 → **For complete guide** (component library, accessibility, RTL):
-See [reference/frontend.md](reference/frontend.md)
+See [patterns/frontend.md](patterns/frontend.md)
 
 ---
 
@@ -571,14 +568,14 @@ CREATE INDEX idx_setting_user_id ON setting(user_id);
 - When: B2B SaaS, workspace-based apps
 
 → **For complete RLS implementation**:
-See [reference/database.md#multi-tenancy-with-row-level-security](reference/database.md#multi-tenancy-with-row-level-security)
+See [patterns/database.md#multi-tenancy-with-row-level-security](patterns/database.md#multi-tenancy-with-row-level-security)
 
 ---
 
 ## Security
 
 → **For complete security implementation** (CSRF, rate limiting, input validation):
-See [reference/security.md](reference/security.md)
+See [patterns/security.md](patterns/security.md)
 
 ---
 
@@ -607,7 +604,7 @@ func TestSetting_Set(t *testing.T) {
 ```
 
 → **For complete testing guide** (HTTP handlers, integration tests, CI/CD):
-See [reference/testing.md](reference/testing.md)
+See [patterns/testing.md](patterns/testing.md)
 
 ---
 
@@ -670,7 +667,7 @@ func main() {
 ```
 
 → **For complete deployment guide** (Docker, production checklist, graceful shutdown):
-See [reference/deployment.md](reference/deployment.md)
+See [patterns/deployment.md](patterns/deployment.md)
 
 ---
 
@@ -715,15 +712,15 @@ migrate-status:
 **When adding features:**
 1. Scan Table of Contents for relevant section
 2. Jump to section via anchor link
-3. If section says "See reference/X.md", read that file
+3. If section says "See patterns/X.md", read that file
 
 **When troubleshooting:**
 1. Check relevant platform component section
-2. Review reference/ for edge cases
+2. Review patterns/ for edge cases
 
 ### Files to Read (in order)
 1. `claude.md` - Main blueprint (this file)
-2. `reference/*.md` - Only when referenced
+2. `patterns/*.md` - Only when referenced
 3. `examples/` - Real-world implementations
 
 **Never skip:**

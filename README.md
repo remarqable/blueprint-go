@@ -6,16 +6,10 @@
 
 ## 🚀 Quick Start
 
-### Using This Blueprint
+### Using This Blueprint as a Git Submodule
 
-**Option 1: Clone/Fork** (for starting a new project)
-```bash
-git clone https://github.com/remarqable/blueprint-go.git myapp
-cd myapp
-cat claude.md  # Read the master blueprint
-```
+Add this blueprint to your project as a **read-only reference**:
 
-**Option 2: Git Submodule** (recommended - keeps blueprint separate)
 ```bash
 # In your new project
 mkdir myapp && cd myapp
@@ -23,6 +17,43 @@ git init
 git submodule add https://github.com/remarqable/blueprint-go.git blueprint
 cat blueprint/claude.md  # Follow the 30-minute bootstrap
 ```
+
+### Keeping the Submodule Read-Only
+
+**Important:** The blueprint submodule should remain unchanged in your project. To prevent accidental modifications:
+
+1. **Never commit changes from inside the submodule:**
+   ```bash
+   # DON'T do this:
+   cd blueprint
+   git add .
+   git commit -m "changes"  # ❌ This modifies the blueprint
+   ```
+
+2. **The submodule is tracked as a reference only:**
+   - Git tracks which commit hash your project references
+   - Changes inside `blueprint/` are ignored by your main project
+   - Run `git status` from your project root (not inside `blueprint/`)
+
+3. **To update the blueprint to a newer version:**
+   ```bash
+   cd blueprint
+   git fetch
+   git checkout main  # or a specific version tag like v1.0.0
+   cd ..
+   git add blueprint
+   git commit -m "Update blueprint to latest version"
+   ```
+
+4. **If you accidentally modify files in the submodule:**
+   ```bash
+   cd blueprint
+   git checkout .  # Discard all changes
+   git clean -fd   # Remove untracked files
+   cd ..
+   ```
+
+**Best Practice:** Treat the `blueprint/` directory as read-only documentation. Copy patterns and code to your own project directories instead of editing the blueprint directly.
 
 ---
 
@@ -40,19 +71,19 @@ cat blueprint/claude.md  # Follow the 30-minute bootstrap
 - Testing with transaction rollback
 - Production deployment
 
-### Reference Guides
+### Pattern Guides
 
-Detailed patterns in `reference/`:
+Detailed architecture and coding standards in `patterns/`:
 
-- **[mvc.md](reference/mvc.md)** - Models (fat), Views (templates), Controllers (thin)
-- **[database.md](reference/database.md)** - Migrations, JSONB, full-text search, RLS, indexes
-- **[htmx.md](reference/htmx.md)** - Interactive patterns (inline edit, delete, modals)
-- **[frontend.md](reference/frontend.md)** - Bootstrap 5 UI, responsive design
-- **[i18n.md](reference/i18n.md)** - Multi-language support with JSON catalogs
-- **[auth.md](reference/auth.md)** - Magic links, sessions, OAuth
-- **[security.md](reference/security.md)** - CSRF, rate limiting, input validation
-- **[testing.md](reference/testing.md)** - Unit, integration, HTTP tests
-- **[deployment.md](reference/deployment.md)** - Docker, production checklist
+- **[mvc.md](patterns/mvc.md)** - Models (fat), Views (templates), Controllers (thin)
+- **[database.md](patterns/database.md)** - Migrations, JSONB, full-text search, RLS, indexes
+- **[htmx.md](patterns/htmx.md)** - Interactive patterns (inline edit, delete, modals)
+- **[frontend.md](patterns/frontend.md)** - Bootstrap 5 UI, responsive design
+- **[i18n.md](patterns/i18n.md)** - Multi-language support with JSON catalogs
+- **[auth.md](patterns/auth.md)** - Magic links, sessions, OAuth
+- **[security.md](patterns/security.md)** - CSRF, rate limiting, input validation
+- **[testing.md](patterns/testing.md)** - Unit, integration, HTTP tests
+- **[deployment.md](patterns/deployment.md)** - Docker, production checklist
 
 ---
 
@@ -102,7 +133,7 @@ Detailed patterns in `reference/`:
 - **B2C (default)**: User-owned data with `user_id` foreign keys
 - **B2B (optional)**: Multi-tenant with PostgreSQL Row-Level Security (RLS)
 
-See [reference/database.md#multi-tenancy](reference/database.md#multi-tenancy-with-row-level-security) for migration guide.
+See [patterns/database.md#multi-tenancy](patterns/database.md#multi-tenancy-with-row-level-security) for migration guide.
 
 ---
 
