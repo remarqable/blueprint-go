@@ -18,7 +18,7 @@
 
 ## Application Startup
 
-### Main Entry Point
+### master Entry Point
 
 ```go
 // cmd/yourapp/main.go
@@ -204,7 +204,7 @@ APP_URL=http://localhost:8000
 
 ### Loading Config
 
-See [Configuration](../../claude.md#configuration) in main blueprint.
+See [Configuration](../../claude.md#configuration) in master blueprint.
 
 ---
 
@@ -622,4 +622,4 @@ jobs:
 
 ---
 
-**Next:** Back to [claude.md](../../claude.md) for main blueprint
+**Next:** Back to [claude.md](../../claude.md) for master blueprint

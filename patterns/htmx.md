@@ -48,7 +48,7 @@
 ```
 views/
 ├── layouts/
-│   ├── base.html          # Main layout with <head>, navbar, footer
+│   ├── base.html          # master layout with <head>, navbar, footer
 │   └── minimal.html       # Auth pages, no navbar
 ├── partials/
 │   ├── _navbar.html       # Shared navbar
@@ -97,7 +97,7 @@ views/
   <!-- Toast container for notifications -->
   <div id="toast-container" class="position-fixed top-0 end-0 p-3" style="z-index: 11"></div>
 
-  <!-- Main content -->
+  <!-- master content -->
   <main class="container py-4">
     {{ block "content" . }}{{ end }}
   </main>

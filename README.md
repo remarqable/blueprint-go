@@ -32,14 +32,14 @@ cat blueprint/claude.md  # Follow the 30-minute bootstrap
 
 2. **The submodule is tracked as a reference only:**
    - Git tracks which commit hash your project references
-   - Changes inside `blueprint/` are ignored by your main project
+   - Changes inside `blueprint/` are ignored by your master project
    - Run `git status` from your project root (not inside `blueprint/`)
 
 3. **To update the blueprint to a newer version:**
    ```bash
    cd blueprint
    git fetch
-   git checkout main  # or a specific version tag like v1.0.0
+   git checkout master  # or a specific version tag like v1.0.0
    cd ..
    git add blueprint
    git commit -m "Update blueprint to latest version"
@@ -54,6 +54,24 @@ cat blueprint/claude.md  # Follow the 30-minute bootstrap
    ```
 
 **Best Practice:** Treat the `blueprint/` directory as read-only documentation. Copy patterns and code to your own project directories instead of editing the blueprint directly.
+
+### Versioning & Updates
+
+This blueprint uses **semantic versioning** (v1.0.0, v1.1.0, v2.0.0, etc.).
+
+**Quick version pinning:**
+```bash
+# Pin to specific version during setup
+cd blueprint && git checkout v1.0.0
+cd .. && git add blueprint && git commit -m "Pin blueprint to v1.0.0"
+
+# Update to newer version later
+cd blueprint && git fetch --tags && git checkout v1.1.0
+cd .. && git add blueprint && git commit -m "Update blueprint to v1.1.0"
+```
+
+**For complete versioning guide** (creating releases, migration guides, stable branches):
+→ **[Blueprint Usage Guide](https://github.com/remarqable/SDLC/blob/main/processes/blueprint-usage.md)** in the SDLC repository
 
 ---
 

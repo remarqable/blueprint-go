@@ -702,4 +702,4 @@ func GoogleCallback(c *gin.Context) {
 
 ---
 
-**Next:** Back to [claude.md](../../claude.md) for main blueprint
+**Next:** Back to [claude.md](../../claude.md) for master blueprint

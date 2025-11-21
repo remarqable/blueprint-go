@@ -196,7 +196,7 @@ yourapp/
 │       └── ratelimit.go         # Rate limiting
 ├── views/                       # Templates (HTML)
 │   ├── layouts/
-│   │   ├── base.html            # Main layout (navbar, footer)
+│   │   ├── base.html            # master layout (navbar, footer)
 │   │   └── minimal.html         # Auth pages (no navbar)
 │   ├── partials/
 │   │   ├── _navbar.html         # Shared navbar
@@ -719,7 +719,7 @@ migrate-status:
 2. Review patterns/ for edge cases
 
 ### Files to Read (in order)
-1. `claude.md` - Main blueprint (this file)
+1. `claude.md` - master blueprint (this file)
 2. `patterns/*.md` - Only when referenced
 3. `examples/` - Real-world implementations
 

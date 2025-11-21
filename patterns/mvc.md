@@ -392,7 +392,7 @@ internal/models/
   <!-- Navbar -->
   {{ template "partials/_navbar.html" . }}
 
-  <!-- Main Content -->
+  <!-- master Content -->
   <main class="container py-4">
     <!-- Flash messages -->
     {{ if .flash }}

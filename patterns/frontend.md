@@ -44,7 +44,7 @@
 ```
 views/
   layouts/
-    base.html              # Main layout (<head>, navbar, footer)
+    base.html              # master layout (<head>, navbar, footer)
     minimal.html           # Auth pages (no navbar)
   partials/
     _navbar.html           # Shared navigation
@@ -547,8 +547,8 @@ body {
 ### Examples
 
 ```html
-<!-- Skip to main content link -->
-<a href="#main-content" class="visually-hidden-focusable">Skip to main content</a>
+<!-- Skip to master content link -->
+<a href="#main-content" class="visually-hidden-focusable">Skip to master content</a>
 
 <main id="main-content">
   <!-- Content -->
