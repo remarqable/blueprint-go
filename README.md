@@ -153,26 +153,6 @@ Detailed architecture and coding standards in `patterns/`:
 
 See [patterns/database.md#multi-tenancy](patterns/database.md#multi-tenancy-with-row-level-security) for migration guide.
 
----
-
-## 🎓 Example Applications
-
-Reference implementations demonstrating these patterns are maintained in **separate repositories**:
-
-### Coming Soon
-
-- **[blueprint-taskmanager](https://github.com/remarqable/blueprint-taskmanager)** - Task management app
-  - Complete CRUD with HTMX
-  - Inline editing, animations
-  - Full test coverage
-
-### Future Examples
-
-- **blueprint-multitenant** - B2B SaaS with Row-Level Security
-- **blueprint-ecommerce** - Product catalog, cart, checkout
-- **blueprint-api** - API-first architecture
-
-**Why separate repos?** Each example is a complete application that can evolve independently. They use this blueprint as a git submodule for reference.
 
 ---
 
