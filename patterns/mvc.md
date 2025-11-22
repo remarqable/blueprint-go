@@ -850,6 +850,50 @@ func handleError(c *gin.Context, err error) {
 
 ## Router Setup
 
+### Template Loading (Nested Directories)
+
+**Problem:** Gin's `LoadHTMLGlob("views/**/*")` doesn't preserve directory paths in template names. Templates in `views/layouts/base.html` get registered as just `base.html`, so `c.HTML(200, "layouts/base.html", data)` fails.
+
+**Solution:** Use manual loading to preserve directory structure:
+
+```go
+// internal/controllers/router.go
+import (
+    "html/template"
+    "os"
+    "path/filepath"
+    "strings"
+)
+
+func loadTemplates() *template.Template {
+    tmpl := template.New("")
+
+    patterns := []string{
+        "views/layouts/*.html",
+        "views/partials/*.html",
+        "views/users/*.html",
+        "views/settings/*.html",
+        // Add new view directories here
+    }
+
+    for _, pattern := range patterns {
+        files, _ := filepath.Glob(pattern)
+        for _, file := range files {
+            name := strings.TrimPrefix(file, "views/")
+            content, _ := os.ReadFile(file)
+            tmpl = template.Must(tmpl.New(name).Parse(string(content)))
+        }
+    }
+    return tmpl
+}
+```
+
+Templates are then referenced as `"layouts/base.html"`, `"partials/_toast.html"`, etc.
+
+> **For single-binary deployment** with embedded templates and static files, see [embed.md](embed.md)
+
+### Full Router Example
+
 ```go
 // internal/controllers/router.go
 package controllers
@@ -871,8 +915,8 @@ func SetupRouter() *gin.Engine {
   // Static files
   router.Static("/static", "./static")
 
-  // Load templates
-  router.LoadHTMLGlob("views/**/*.html")
+  // Load templates (with directory structure preserved)
+  router.SetHTMLTemplate(loadTemplates())
 
   // Public routes
   public := router.Group("/")

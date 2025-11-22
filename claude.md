@@ -131,6 +131,7 @@ make run  # or: go run ./cmd/yourapp
 - [Auth & Sessions](patterns/auth.md) - Magic links, OAuth, JWT
 - [HTMX Cookbook](patterns/htmx.md) - Interactive patterns
 - [Frontend Guide](patterns/frontend.md) - Bootstrap + HTMX
+- [Embed Assets](patterns/embed.md) - Single binary deployment
 - [Testing Guide](patterns/testing.md) - Unit + integration tests
 - [Security Guide](patterns/security.md) - CSRF, rate limiting, security checklist
 - [Deployment Guide](patterns/deployment.md) - Production deployment
@@ -231,6 +232,7 @@ yourapp/
 │   ├── auth.md                  # Magic links, OAuth, JWT
 │   ├── htmx.md                  # HTMX patterns
 │   ├── frontend.md              # Bootstrap + HTMX
+│   ├── embed.md                 # Single binary deployment
 │   ├── testing.md               # Testing patterns
 │   ├── security.md              # Security checklist
 │   └── deployment.md            # Production deployment
