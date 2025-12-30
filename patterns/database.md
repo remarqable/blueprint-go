@@ -1,11 +1,29 @@
 # Database Reference Guide
 
-> Comprehensive database patterns for Go+Gin SaaS applications using PostgreSQL
+> Comprehensive database patterns for Go+Gin SaaS applications using GORM with SQLite or PostgreSQL
+
+---
+
+## Database Selection
+
+Choose your database based on your needs:
+
+| Feature | SQLite | PostgreSQL |
+|---------|--------|------------|
+| Setup complexity | None (file-based) | Docker or install |
+| Concurrency | Limited (file locks) | Excellent |
+| JSON support | TEXT field | Native JSONB |
+| Full-text search | Basic FTS5 | Advanced tsvector |
+| Row-Level Security | No | Yes |
+| Migrations (goose) | Yes | Yes |
+| GORM support | Full | Full |
+| Best for | Dev, single-server, simple apps | Production, multi-server, advanced features |
 
 ---
 
 ## Table of Contents
 
+- [Database Selection](#database-selection)
 - [Database Conventions](#database-conventions)
 - [Connection Management](#connection-management)
 - [Migrations](#migrations)
@@ -100,57 +118,65 @@ status order_status DEFAULT 'pending'
 
 ## Connection Management
 
-### Database Handle Pattern
+### Database Handle Pattern (GORM)
 
 ```go
 // internal/platform/db/db.go
 package db
 
 import (
-  "context"
-  "time"
-  "github.com/jmoiron/sqlx"
+  "gorm.io/gorm"
+  "gorm.io/driver/sqlite"
+  "gorm.io/driver/postgres"
 )
 
-var gdb *sqlx.DB
-const DefaultTimeout = 3 * time.Second
+var gdb *gorm.DB
 
-func SetDB(database *sqlx.DB) { gdb = database }
-func Get() *sqlx.DB { return gdb }
+func SetDB(database *gorm.DB) { gdb = database }
+func Get() *gorm.DB { return gdb }
 
-func WithTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-  if ctx == nil { ctx = context.Background() }
-  if d == 0 { d = DefaultTimeout }
-  return context.WithTimeout(ctx, d)
+// ConnectSQLite connects to SQLite database
+func ConnectSQLite(path string) (*gorm.DB, error) {
+  return gorm.Open(sqlite.Open(path), &gorm.Config{})
 }
 
-func WithTx(ctx context.Context, fn func(ctx context.Context, tx *sqlx.Tx) error) error {
-  tx, err := gdb.BeginTxx(ctx, nil)
-  if err != nil { return err }
-  if err := fn(ctx, tx); err != nil {
-    _ = tx.Rollback()
-    return err
-  }
-  return tx.Commit()
+// ConnectPostgres connects to PostgreSQL database
+func ConnectPostgres(dsn string) (*gorm.DB, error) {
+  return gorm.Open(postgres.Open(dsn), &gorm.Config{})
+}
+
+// WithTx wraps operations in a transaction
+func WithTx(fn func(tx *gorm.DB) error) error {
+  return gdb.Transaction(fn)
+}
+
+// WithContext returns DB with context for timeouts
+func WithContext(ctx context.Context) *gorm.DB {
+  return gdb.WithContext(ctx)
 }
 ```
 
-### Connection Pooling
+### Connection Pooling (PostgreSQL only)
 
 ```go
 // cmd/app/main.go
-database, err := sqlx.ConnectContext(ctx, "postgres", dsn)
+database, err := db.ConnectPostgres(dsn)
 if err != nil {
   log.Fatal().Err(err).Msg("failed to connect to database")
 }
 
+// Get underlying sql.DB for pool settings
+sqlDB, _ := database.DB()
+
 // Production settings
-database.SetMaxOpenConns(25)           // Max open connections
-database.SetMaxIdleConns(5)            // Max idle connections
-database.SetConnMaxLifetime(5 * time.Minute)  // Connection lifetime
+sqlDB.SetMaxOpenConns(25)                    // Max open connections
+sqlDB.SetMaxIdleConns(5)                     // Max idle connections
+sqlDB.SetConnMaxLifetime(5 * time.Minute)    // Connection lifetime
 ```
 
-### Model Pattern
+> **Note:** SQLite doesn't need connection pooling - it uses file-level locking.
+
+### Model Pattern (GORM)
 
 ```go
 // internal/models/user.go
@@ -158,43 +184,36 @@ package models
 
 import (
   "context"
-  "database/sql"
   "time"
 
+  "gorm.io/gorm"
   "yourapp/internal/platform/db"
   "yourapp/internal/platform/errors"
 )
 
 type User struct {
-  ID        int64     `db:"id"`
-  Email     string    `db:"email"`
-  Name      string    `db:"name"`
-  CreatedAt time.Time `db:"created_at"`
-  UpdatedAt time.Time `db:"updated_at"`
+  ID        int64     `gorm:"primaryKey" json:"id"`
+  Email     string    `gorm:"uniqueIndex" json:"email"`
+  Name      string    `json:"name"`
+  CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+  UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
+// GetByEmail finds user by email
 func (u *User) GetByEmail(email string) error {
-  ctx, cancel := db.WithTimeout(context.Background(), 0)
-  defer cancel()
-
-  err := db.Get().GetContext(ctx, u, `SELECT * FROM "user" WHERE email=$1`, email)
-  if err != nil {
-    if err == sql.ErrNoRows {
+  result := db.Get().Where("email = ?", email).First(u)
+  if result.Error != nil {
+    if result.Error == gorm.ErrRecordNotFound {
       return errors.New(errors.CodeNotFound, "user not found")
     }
-    return errors.Wrap(err, errors.CodeDatabaseQuery, "failed to query user")
+    return errors.Wrap(result.Error, errors.CodeDatabaseQuery, "failed to query user")
   }
   return nil
 }
 
+// Create inserts a new user
 func (u *User) Create(ctx context.Context) error {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
-  return db.Get().QueryRowContext(ctx,
-    `INSERT INTO "user" (email, name) VALUES ($1, $2)
-     RETURNING id, created_at, updated_at`,
-    u.Email, u.Name).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
+  return db.Get().WithContext(ctx).Create(u).Error
 }
 ```
 
@@ -285,73 +304,63 @@ CREATE INDEX idx_product_metadata_gin ON product USING GIN (metadata);
 CREATE INDEX idx_product_metadata_category ON product USING GIN ((metadata->'category'));
 ```
 
-### Go Integration
+### Go Integration (GORM)
 
 ```go
 import (
-  "database/sql/driver"
-  "encoding/json"
+  "gorm.io/datatypes"
 )
 
-// Custom JSONB type for sqlx
-type JSONB map[string]interface{}
-
-func (j JSONB) Value() (driver.Value, error) {
-  return json.Marshal(j)
-}
-
-func (j *JSONB) Scan(value interface{}) error {
-  b, ok := value.([]byte)
-  if !ok {
-    return errors.New("type assertion to []byte failed")
-  }
-  return json.Unmarshal(b, j)
-}
-
-// Model with JSONB
+// Model with JSON using GORM datatypes
 type Product struct {
-  ID          int64     `db:"id"`
-  Name        string    `db:"name"`
-  Description string    `db:"description"`
-  Metadata    JSONB     `db:"metadata"`
-  CreatedAt   time.Time `db:"created_at"`
+  ID          int64          `gorm:"primaryKey" json:"id"`
+  Name        string         `json:"name"`
+  Description string         `json:"description"`
+  Metadata    datatypes.JSON `gorm:"type:jsonb" json:"metadata"`  // jsonb for PostgreSQL, text for SQLite
+  CreatedAt   time.Time      `gorm:"autoCreateTime" json:"created_at"`
+}
+
+// For typed JSON (recommended)
+type ProductMetadata struct {
+  Category string            `json:"category"`
+  Specs    map[string]string `json:"specs"`
+  InStock  bool              `json:"in_stock"`
+}
+
+type ProductTyped struct {
+  ID          int64                                `gorm:"primaryKey"`
+  Name        string
+  Metadata    datatypes.JSONType[ProductMetadata] `gorm:"type:jsonb"`
+  CreatedAt   time.Time                           `gorm:"autoCreateTime"`
 }
 ```
 
-### Common Queries
+### Common Queries (GORM)
 
 ```go
-// Insert with JSONB
-metadata := JSONB{
-  "category": "electronics",
-  "specs": map[string]interface{}{
-    "color": "black",
-    "weight": "1.5kg",
-  },
-  "in_stock": true,
+// Insert with JSON
+product := Product{
+  Name:        "Laptop",
+  Description: "Gaming laptop...",
+  Metadata:    datatypes.JSON([]byte(`{"category":"electronics","in_stock":true}`)),
 }
+db.Get().Create(&product)
 
-db.Get().ExecContext(ctx,
-  `INSERT INTO product (name, description, metadata) VALUES ($1, $2, $3)`,
-  "Laptop", "Gaming laptop...", metadata)
+// Query by JSON field (PostgreSQL - uses jsonb operators)
+var products []Product
+db.Get().Where("metadata->>'in_stock' = ?", "true").Find(&products)
 
-// Query by JSONB field
-db.Get().SelectContext(ctx, &products,
-  `SELECT * FROM product WHERE metadata->>'in_stock' = 'true'`)
+// Containment query (PostgreSQL)
+db.Get().Where("metadata @> ?", `{"category": "electronics"}`).Find(&products)
 
-// Containment query (@>)
-db.Get().SelectContext(ctx, &products,
-  `SELECT * FROM product WHERE metadata @> '{"category": "electronics"}'`)
+// Using datatypes helper (works with both SQLite and PostgreSQL)
+db.Get().Where(datatypes.JSONQuery("metadata").HasKey("category")).Find(&products)
 
-// Nested field
-db.Get().SelectContext(ctx, &products,
-  `SELECT * FROM product WHERE metadata->'specs'->>'color' = 'black'`)
-
-// Update JSONB (merge)
-db.Get().ExecContext(ctx,
-  `UPDATE product SET metadata = metadata || '{"in_stock": false}' WHERE id = $1`,
-  productID)
+// Update JSON field
+db.Get().Model(&product).Update("metadata", datatypes.JSON([]byte(`{"in_stock":false}`)))
 ```
+
+> **Note:** For SQLite, JSON is stored as TEXT. Use `datatypes.JSONQuery` for cross-database compatibility.
 
 ### Best Practices
 
@@ -413,23 +422,32 @@ SELECT * FROM product WHERE name ILIKE '%lap%';  -- Substring
 SELECT * FROM product WHERE name % 'labtop';     -- Fuzzy (typo tolerance)
 ```
 
-### Go Model Example
+### Go Model Example (GORM)
 
 ```go
 func SearchProducts(ctx context.Context, query string) ([]Product, error) {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
   var products []Product
-  err := db.Get().SelectContext(ctx, &products,
-    `SELECT * FROM product
-     WHERE tsv @@ to_tsquery('simple', $1)
-     ORDER BY ts_rank(tsv, to_tsquery('simple', $1)) DESC
-     LIMIT 50`,
-    query)
+  err := db.Get().WithContext(ctx).
+    Where("tsv @@ to_tsquery('simple', ?)", query).
+    Order("ts_rank(tsv, to_tsquery('simple', ?)) DESC", query).
+    Limit(50).
+    Find(&products).Error
+  return products, err
+}
+
+// Alternative using Raw for complex queries
+func SearchProductsRaw(ctx context.Context, query string) ([]Product, error) {
+  var products []Product
+  err := db.Get().WithContext(ctx).Raw(`
+    SELECT * FROM product
+    WHERE tsv @@ to_tsquery('simple', ?)
+    ORDER BY ts_rank(tsv, to_tsquery('simple', ?)) DESC
+    LIMIT 50`, query, query).Scan(&products).Error
   return products, err
 }
 ```
+
+> **Note:** Full-text search is PostgreSQL-only. For SQLite, use LIKE queries or FTS5 extension.
 
 ---
 
@@ -584,9 +602,9 @@ func TenantMiddleware() gin.HandlerFunc {
     // Set in database session (for RLS enforcement)
     // IMPORTANT: Use SET LOCAL (not SET SESSION) so it resets after request
     ctx := c.Request.Context()
-    _, err = db.Get().ExecContext(ctx,
-      "SET LOCAL app.tenant_id = $1",
-      session.TenantID)
+    err = db.Get().WithContext(ctx).Exec(
+      "SET LOCAL app.tenant_id = ?",
+      session.TenantID).Error
 
     if err != nil {
       c.AbortWithStatusJSON(500, gin.H{"error": errors.CodeUnknown})
@@ -606,20 +624,20 @@ func getToken(c *gin.Context) string {
 }
 ```
 
-### Usage in Application Code
+### Usage in Application Code (GORM)
 
 **Controllers:**
 ```go
 func ListPosts(c *gin.Context) {
-  tenantID := c.GetInt64("tenant_id")  // From Gin context
   ctx := c.Request.Context()
 
   var posts []models.Post
 
   // RLS automatically filters by tenant_id in database
   // No need for WHERE tenant_id = ? in query!
-  err := db.Get().SelectContext(ctx, &posts,
-    `SELECT * FROM post ORDER BY created_at DESC`)
+  err := db.Get().WithContext(ctx).
+    Order("created_at DESC").
+    Find(&posts).Error
 
   if err != nil {
     handleError(c, err)
@@ -632,30 +650,37 @@ func ListPosts(c *gin.Context) {
 
 **Models:**
 ```go
-// Create: explicitly pass tenant_id
-func (p *Post) Create(ctx context.Context, tenantID, userID int64) error {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
-  return db.Get().QueryRowContext(ctx,
-    `INSERT INTO post (tenant_id, user_id, title, content, published)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at, updated_at`,
-    tenantID, userID, p.Title, p.Content, p.Published,
-  ).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
+// Post model with tenant_id
+type Post struct {
+  ID        int64     `gorm:"primaryKey" json:"id"`
+  TenantID  int64     `gorm:"index" json:"tenant_id"`
+  UserID    int64     `gorm:"index" json:"user_id"`
+  Title     string    `json:"title"`
+  Content   string    `json:"content"`
+  Published bool      `gorm:"default:false" json:"published"`
+  CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+  UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
-// List: RLS filters automatically
-func GetPostsByUser(ctx context.Context, userID int64) ([]Post, error) {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
+// Create: explicitly pass tenant_id
+func (p *Post) Create(ctx context.Context, tenantID, userID int64) error {
+  p.TenantID = tenantID
+  p.UserID = userID
+  return db.Get().WithContext(ctx).Create(p).Error
+}
 
+// List: RLS filters automatically (PostgreSQL) or use scope (SQLite)
+func GetPostsByUser(ctx context.Context, userID int64) ([]Post, error) {
   var posts []Post
-  err := db.Get().SelectContext(ctx, &posts,
-    `SELECT * FROM post WHERE user_id = $1 ORDER BY created_at DESC`,
-    userID)
+  err := db.Get().WithContext(ctx).
+    Where("user_id = ?", userID).
+    Order("created_at DESC").
+    Find(&posts).Error
   return posts, err
 }
 ```
+
+> **Note:** RLS is PostgreSQL-only. For SQLite, use GORM scopes to filter by tenant_id.
 
 ### Benefits of RLS
 
@@ -696,29 +721,26 @@ CREATE POLICY tenant_isolation_policy ON post
 -- 5. Update application code to set tenant_id in session
 ```
 
-### Testing Multi-Tenancy
+### Testing Multi-Tenancy (GORM)
 
 ```go
 func TestPost_Create_MultiTenant(t *testing.T) {
   db.SetupTestData(t)
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
-    // Set tenant context
-    _, err := tx.Exec("SET LOCAL app.tenant_id = 1")
-    require.NoError(t, err)
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
+    // Set tenant context (PostgreSQL RLS)
+    tx.Exec("SET LOCAL app.tenant_id = 1")
 
     post := Post{Title: "Test post", Content: "Hello world"}
-    err = post.Create(context.Background(), 1, 1)
+    err := post.Create(context.Background(), 1, 1)
     require.NoError(t, err)
 
     // Verify isolation: different tenant can't see post
-    _, err = tx.Exec("SET LOCAL app.tenant_id = 2")
-    require.NoError(t, err)
+    tx.Exec("SET LOCAL app.tenant_id = 2")
 
-    var count int
-    err = tx.Get(&count, `SELECT COUNT(*) FROM post`)
-    require.NoError(t, err)
-    assert.Equal(t, 0, count)  // Tenant 2 sees no posts
+    var count int64
+    tx.Model(&Post{}).Count(&count)
+    assert.Equal(t, int64(0), count)  // Tenant 2 sees no posts
   })
 }
 ```
@@ -909,16 +931,17 @@ SELECT * FROM post;  -- Should only show tenant 1 data
 
 ## Best Practices Summary
 
-✅ **Always use transactions** for multi-step operations
-✅ **Always pass context** to DB calls with timeouts
+✅ **Always use transactions** for multi-step operations (`db.Transaction()`)
+✅ **Always pass context** to DB calls (`db.WithContext(ctx)`)
 ✅ **Index all foreign keys** for JOIN performance
-✅ **Use prepared statements** (sqlx does this automatically)
+✅ **Use GORM's query builder** for type-safe queries
 ✅ **Validate input** before DB calls (in models)
 ✅ **Log DB errors** with context (request ID, user ID)
 ✅ **Monitor slow queries** in production
 ✅ **Test migrations** on copy of production data
 ✅ **Backup before sync** (production → local)
-✅ **Use RLS** for multi-tenancy (defense in depth)
+✅ **Use RLS** for multi-tenancy (PostgreSQL only, defense in depth)
+✅ **Use GORM scopes** for reusable query patterns
 
 ---
 

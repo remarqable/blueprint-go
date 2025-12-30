@@ -32,14 +32,27 @@ mkdir -p lang migrations config
 **Step 2: Install Dependencies** (1 min)
 ```bash
 go get github.com/gin-gonic/gin
-go get github.com/jmoiron/sqlx
-go get github.com/lib/pq
+go get gorm.io/gorm
+go get gorm.io/driver/sqlite    # For SQLite
+go get gorm.io/driver/postgres  # For PostgreSQL (optional)
 go get github.com/rs/zerolog
 go install github.com/pressly/goose/v3/cmd/goose@latest
 ```
 ✅ **Verify:** `go mod tidy` succeeds
 
 **Step 3: Database Setup** (5 min)
+
+**Option A: SQLite (Recommended for development)**
+```bash
+# No setup needed! SQLite creates the file automatically.
+export DATABASE_PATH="./app.db"
+
+# Apply migrations
+goose -dir migrations sqlite3 "$DATABASE_PATH" up
+```
+✅ **Verify:** `app.db` file exists
+
+**Option B: PostgreSQL (For production)**
 ```bash
 # Start local Postgres
 docker run --name app-db \
@@ -51,8 +64,7 @@ docker run --name app-db \
 # Set DATABASE_URL
 export DATABASE_URL="postgres://app:app@localhost:5432/app?sslmode=disable"
 
-# Create initial migration (see § Database Setup for schema)
-# Apply migration
+# Apply migrations
 goose -dir migrations postgres "$DATABASE_URL" up
 ```
 ✅ **Verify:** `psql "$DATABASE_URL"` connects
@@ -250,14 +262,25 @@ yourapp/
 |-------|-----------|-----------|
 | **Backend** | Go 1.21+ | Performance, simplicity, compiled binary |
 | **Web Framework** | Gin | Fast, minimal, great DX |
-| **Database** | PostgreSQL 15+ | JSONB, full-text search, RLS |
-| **SQL Library** | sqlx | Clear SQL, pragmatic ergonomics |
+| **Database** | SQLite or PostgreSQL | SQLite for dev/simple apps, PostgreSQL for production |
+| **ORM** | GORM | Type-safe, flexible, supports multiple databases |
 | **Templates** | html/template | Secure (auto-escape), fast, embedded |
 | **Frontend** | Bootstrap 5 + HTMX | No build step, progressive enhancement |
 | **i18n** | JSON catalogs | Simple, runtime-loaded |
 | **Logging** | zerolog | Structured, fast |
 | **Migrations** | goose | Simple, SQL-based |
 | **Auth** | Magic links (dev) | Easy to start, extensible |
+
+### Database Choice
+
+| Use Case | Recommended |
+|----------|-------------|
+| Development & prototyping | SQLite |
+| Single-server deployments | SQLite |
+| Simple web apps (low concurrency) | SQLite |
+| Production multi-server | PostgreSQL |
+| High concurrency | PostgreSQL |
+| Advanced features (JSONB, FTS, RLS) | PostgreSQL |
 
 ---
 
@@ -289,35 +312,45 @@ yourapp/
 
 ## Database Setup
 
-**Minimal connection setup:**
+**Minimal connection setup with GORM:**
 
 ```go
 // internal/platform/db/db.go
 package db
 
 import (
-  "context"
-  "time"
-  "github.com/jmoiron/sqlx"
+  "gorm.io/gorm"
+  "gorm.io/driver/sqlite"
+  "gorm.io/driver/postgres"
 )
 
-var gdb *sqlx.DB
-const DefaultTimeout = 3 * time.Second
+var gdb *gorm.DB
 
-func SetDB(database *sqlx.DB) { gdb = database }
-func Get() *sqlx.DB { return gdb }
+func SetDB(database *gorm.DB) { gdb = database }
+func Get() *gorm.DB { return gdb }
 
-func WithTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-  if ctx == nil { ctx = context.Background() }
-  if d == 0 { d = DefaultTimeout }
-  return context.WithTimeout(ctx, d)
+// ConnectSQLite connects to SQLite database
+func ConnectSQLite(path string) (*gorm.DB, error) {
+  return gorm.Open(sqlite.Open(path), &gorm.Config{})
+}
+
+// ConnectPostgres connects to PostgreSQL database
+func ConnectPostgres(dsn string) (*gorm.DB, error) {
+  return gorm.Open(postgres.Open(dsn), &gorm.Config{})
+}
+
+// WithTx wraps operations in a transaction
+func WithTx(fn func(tx *gorm.DB) error) error {
+  return gdb.Transaction(fn)
 }
 ```
 
 **Conventions:**
 - Tables: lowercase, singular (`user`, `setting`)
 - Columns: `snake_case` (`created_at`, `user_id`)
-- All tables have `created_at`, `updated_at`
+- All tables have `created_at`, `updated_at` (GORM handles automatically)
+- Use `gorm:"primaryKey"` for primary keys
+- Use `gorm:"uniqueIndex"` for unique columns
 
 → **For complete guide** (migrations, transactions, JSONB, FTS, indexes, multi-tenancy):
 See [patterns/database.md](patterns/database.md)
@@ -589,14 +622,14 @@ See [patterns/security.md](patterns/security.md)
 func TestSetting_Set(t *testing.T) {
   db.SetupTestData(t) // Load demo data once
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     setting := Setting{
       UserID: 1,
       Key:    "theme",
       Value:  "dark",
     }
 
-    err := setting.Set(context.Background())
+    err := tx.Create(&setting).Error
     require.NoError(t, err)
     assert.NotZero(t, setting.ID)
 
@@ -619,19 +652,14 @@ See [patterns/testing.md](patterns/testing.md)
 package main
 
 import (
-  "context"
   "fmt"
   "os"
-  "time"
 
   "yourapp/internal/controllers"
   "yourapp/internal/platform/config"
   "yourapp/internal/platform/db"
   "yourapp/internal/platform/i18n"
   "yourapp/internal/platform/logger"
-
-  "github.com/jmoiron/sqlx"
-  _ "github.com/lib/pq"
 )
 
 func main() {
@@ -643,18 +671,27 @@ func main() {
     log.Fatal().Err(err).Msg("failed to load config")
   }
 
-  ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-  defer cancel()
-
-  database, err := sqlx.ConnectContext(ctx, "postgres", cfg.DatabaseURL)
+  // Connect to database (SQLite or PostgreSQL)
+  var database *gorm.DB
+  if cfg.DatabasePath != "" {
+    // SQLite
+    database, err = db.ConnectSQLite(cfg.DatabasePath)
+  } else {
+    // PostgreSQL
+    database, err = db.ConnectPostgres(cfg.DatabaseURL)
+  }
   if err != nil {
     log.Fatal().Err(err).Msg("failed to connect to database")
   }
-  defer database.Close()
 
   db.SetDB(database)
-  database.SetMaxOpenConns(25)
-  database.SetMaxIdleConns(5)
+
+  // Configure connection pool (PostgreSQL only)
+  if cfg.DatabaseURL != "" {
+    sqlDB, _ := database.DB()
+    sqlDB.SetMaxOpenConns(25)
+    sqlDB.SetMaxIdleConns(5)
+  }
 
   i18n.Preload("en")
   router := controllers.SetupRouter()

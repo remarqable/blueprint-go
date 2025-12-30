@@ -59,12 +59,12 @@ import (
 )
 
 type User struct {
-  ID        int64     `db:"id" json:"id"`
-  Email     string    `db:"email" json:"email"`
-  Name      string    `db:"name" json:"name"`
-  AvatarURL string    `db:"avatar_url" json:"avatar_url"`
-  CreatedAt time.Time `db:"created_at" json:"created_at"`
-  UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
+  ID        int64     `gorm:"primaryKey" json:"id"`
+  Email     string    `gorm:"uniqueIndex" json:"email"`
+  Name      string    `json:"name"`
+  AvatarURL string    `json:"avatar_url"`
+  CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+  UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // Validate performs business logic validation
@@ -92,16 +92,7 @@ func (u *User) Create(ctx context.Context) error {
   if err := u.Validate(); err != nil {
     return err
   }
-
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
-  return db.Get().QueryRowContext(ctx,
-    `INSERT INTO "user" (email, name, avatar_url)
-     VALUES ($1, $2, $3)
-     RETURNING id, created_at, updated_at`,
-    u.Email, u.Name, u.AvatarURL,
-  ).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
+  return db.Get().WithContext(ctx).Create(u).Error
 }
 
 // Update updates an existing user
@@ -110,45 +101,25 @@ func (u *User) Update(ctx context.Context) error {
     return err
   }
 
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
-  result, err := db.Get().ExecContext(ctx,
-    `UPDATE "user"
-     SET name = $1, avatar_url = $2
-     WHERE id = $3`,
-    u.Name, u.AvatarURL, u.ID)
-
-  if err != nil {
-    return err
+  result := db.Get().WithContext(ctx).Save(u)
+  if result.Error != nil {
+    return result.Error
   }
-
-  rows, _ := result.RowsAffected()
-  if rows == 0 {
+  if result.RowsAffected == 0 {
     return errors.New(errors.CodeNotFound, "user not found")
   }
-
   return nil
 }
 
 // Delete deletes a user
 func (u *User) Delete(ctx context.Context) error {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
-  result, err := db.Get().ExecContext(ctx,
-    `DELETE FROM "user" WHERE id = $1`,
-    u.ID)
-
-  if err != nil {
-    return err
+  result := db.Get().WithContext(ctx).Delete(u)
+  if result.Error != nil {
+    return result.Error
   }
-
-  rows, _ := result.RowsAffected()
-  if rows == 0 {
+  if result.RowsAffected == 0 {
     return errors.New(errors.CodeNotFound, "user not found")
   }
-
   return nil
 }
 
