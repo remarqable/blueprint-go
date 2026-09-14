@@ -163,11 +163,20 @@ gateways, and eight workers is already at 350.
 Budget across all processes, not per process:
 
 ```go
-database.SetMaxOpenConns(20)
-database.SetMaxIdleConns(5)
-database.SetConnMaxLifetime(30 * time.Minute)  // survives failover/DNS changes
-database.SetConnMaxIdleTime(5 * time.Minute)
+// GORM does not expose pool settings directly -- reach the *sql.DB underneath.
+sqlDB, err := database.DB()
+if err != nil {
+  return err
+}
+sqlDB.SetMaxOpenConns(20)                      // per process, budgeted below
+sqlDB.SetMaxIdleConns(5)
+sqlDB.SetConnMaxLifetime(30 * time.Minute)     // survives failover/DNS changes
+sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 ```
+
+**This is the blueprint's canonical pool configuration.** Other docs show a
+connection being opened; the numbers come from here, and they are a budget
+across every process, not a per-process default to copy.
 
 When the total exceeds ~200, add pgbouncer in **transaction** mode.
 

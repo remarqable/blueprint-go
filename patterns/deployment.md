@@ -73,7 +73,7 @@ func main() {
     log.Fatal().Err(err).Msg("failed to reach underlying pool")
   }
   defer sqlDB.Close()
-  sqlDB.SetMaxOpenConns(25)
+  sqlDB.SetMaxOpenConns(20)
   sqlDB.SetMaxIdleConns(5)
   sqlDB.SetConnMaxLifetime(30 * time.Minute)
 
@@ -114,8 +114,11 @@ func main() {
     shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
     defer shutdownCancel()
 
-    if err := database.Close(); err != nil {
-      log.Error().Err(err).Msg("error closing database")
+    // *gorm.DB has no Close() -- the *sql.DB underneath does.
+    if sqlDB, err := database.DB(); err == nil {
+      if err := sqlDB.Close(); err != nil {
+        log.Error().Err(err).Msg("error closing database")
+      }
     }
 
     log.Info().Msg("shutdown complete")
@@ -341,7 +344,7 @@ docker run -p 8080:8080 \
 ### Application
 
 - [ ] **Logging** to stdout (JSON format)
-- [ ] **Health check** endpoint working (`/healthz`)
+- [ ] **Health checks** working: `/healthz` (no dependencies) and `/readyz`
 - [ ] **Metrics** endpoint (optional: `/metrics`)
 - [ ] **Graceful shutdown** on SIGTERM
 - [ ] **Request ID** tracking enabled
@@ -367,36 +370,42 @@ docker run -p 8080:8080 \
 
 ### Health Check Endpoint
 
+Two endpoints, different jobs. **Liveness must not touch the database** — if it
+does, one brief database blip fails liveness on every instance at once, the
+orchestrator restarts them all, and a recoverable incident becomes a full
+outage with a cold cache.
+
 ```go
 // internal/controllers/health.go
-func HealthCheck(c *gin.Context) {
-  // Ping database
-  ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+
+// Liveness: is this process wedged? No dependencies, ever.
+func Healthz(c *gin.Context) {
+  c.JSON(200, gin.H{"status": "ok", "version": os.Getenv("APP_VERSION")})
+}
+
+// Readiness: can it serve requests? Checks dependencies.
+func Readyz(c *gin.Context) {
+  ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
   defer cancel()
 
-  dbStatus := "ok"
-  sqlDB, err := db.Unscoped().DB()
+  sqlDB, err := db.Get().DB()
   if err == nil {
     err = sqlDB.PingContext(ctx)
   }
   if err != nil {
-    dbStatus = "error"
-    c.JSON(503, gin.H{
-      "status": "unhealthy",
-      "database": dbStatus,
-      "error": err.Error(),
-    })
+    c.JSON(503, gin.H{"status": "degraded", "database": err.Error()})
     return
   }
-
-  c.JSON(200, gin.H{
-    "status": "healthy",
-    "version": os.Getenv("APP_VERSION"),
-    "database": dbStatus,
-    "uptime": time.Since(startTime).String(),
-  })
+  c.JSON(200, gin.H{"status": "ok", "uptime": time.Since(startTime).String()})
 }
 ```
+
+Point the orchestrator's liveness probe at `/healthz` and its readiness probe
+at `/readyz`. Load balancers use `/readyz`.
+
+→ Full rationale, plus the equivalent for workers:
+[observability.md](observability.md#health-checks)
+
 
 ### Metrics Endpoint (Optional)
 
@@ -466,9 +475,11 @@ func main() {
     log.Fatal().Err(err).Msg("server forced to shutdown")
   }
 
-  // Close database connections
-  if err := database.Close(); err != nil {
-    log.Error().Err(err).Msg("error closing database")
+  // Close database connections. *gorm.DB has no Close(); the pool does.
+  if sqlDB, err := database.DB(); err == nil {
+    if err := sqlDB.Close(); err != nil {
+      log.Error().Err(err).Msg("error closing database")
+    }
   }
 
   log.Info().Msg("server exited")

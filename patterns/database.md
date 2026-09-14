@@ -216,7 +216,7 @@ if err != nil {
 sqlDB, _ := database.DB()
 
 // Production settings
-sqlDB.SetMaxOpenConns(25)                    // Max open connections
+sqlDB.SetMaxOpenConns(20)                    // budget across ALL processes
 sqlDB.SetMaxIdleConns(5)                     // Max idle connections
 sqlDB.SetConnMaxLifetime(5 * time.Minute)    // Connection lifetime
 ```
@@ -554,6 +554,9 @@ CREATE INDEX idx_product_name_trgm ON product USING GIN (name gin_trgm_ops);
 ---
 
 ## Multi-Tenancy
+
+> `tenancy: shared` only. With `tenancy: personal`, data belongs to one user:
+> use a `user_id` foreign key and skip this section entirely.
 
 Two mechanisms, chosen by database, behind one API.
 

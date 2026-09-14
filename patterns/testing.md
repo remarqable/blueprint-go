@@ -738,7 +738,8 @@ func TestDeleteSetting(t *testing.T) {
 
 ## Tenant Isolation Tests
 
-`tenancy: shared` only. These are the tests that decide whether your product
+> `tenancy: shared` only.
+ These are the tests that decide whether your product
 leaks customer data, and there are five of them. Write them once, early, and
 never let them be skipped.
 

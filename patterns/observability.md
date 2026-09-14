@@ -142,9 +142,9 @@ The minimum set, by layer:
 | Layer | Metrics |
 |---|---|
 | HTTP | requests by route/status, duration histogram, in-flight |
-| Jobs | pending, **oldest pending age**, duration by kind, dead total, reclaimed |
-| Realtime | active connections, evictions, fanout latency, gap refetches |
-| AI | calls by model/purpose, tokens, cost, rejections, latency |
+| Jobs (`jobs: true`) | pending, **oldest pending age**, duration by kind, dead total, reclaimed |
+| Realtime (`realtime: true`) | active connections, evictions, fanout latency, gap refetches |
+| AI (`ai: true`) | calls by model/purpose, tokens, cost, rejections, latency |
 | Database | pool in-use/idle/waiting, query duration, deadlocks |
 
 **Oldest pending age beats queue depth** for anything queue-shaped. Depth spikes
@@ -182,6 +182,8 @@ Rule of thumb: a label is safe if you can name every value it will ever take.
 ---
 
 ## Cost as a Signal
+
+> `ai: true` only. Skip this section if the project does not call a model.
 
 For anything model-backed, cost is an operational signal with the same standing
 as latency, and it degrades in ways latency does not — silently, and with a
