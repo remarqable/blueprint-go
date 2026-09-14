@@ -15,6 +15,9 @@
 - [Unit Tests](#unit-tests)
 - [Integration Tests](#integration-tests)
 - [HTTP Handler Tests](#http-handler-tests)
+- [Tenant Isolation Tests](#tenant-isolation-tests)
+- [Testing the Layers](#testing-the-layers)
+- [Running against PostgreSQL](#running-against-postgresql)
 - [Pre-commit Hooks](#pre-commit-hooks)
 - [CI/CD Integration](#cicd-integration)
 - [Best Practices](#best-practices)
@@ -111,59 +114,85 @@ package db
 import (
   "context"
   "testing"
-  "github.com/jmoiron/sqlx"
+
+  "gorm.io/gorm"
 )
 
-// TestTx wraps a test in a transaction that auto-rolls back
-// Ensures test isolation without DB spin-up overhead
-func TestTx(t *testing.T, fn func(t *testing.T, tx *sqlx.Tx)) {
+// TestTx wraps a test in a transaction that always rolls back.
+// Isolation without the cost of recreating the schema per test.
+func TestTx(t *testing.T, fn func(t *testing.T, tx *gorm.DB)) {
   t.Helper()
 
-  ctx := context.Background()
-  tx, err := Get().BeginTxx(ctx, nil)
-  if err != nil {
-    t.Fatalf("failed to begin tx: %v", err)
+  tx := Unscoped().Begin()
+  if tx.Error != nil {
+    t.Fatalf("failed to begin tx: %v", tx.Error)
   }
-
-  // Always rollback (even if test passes)
-  defer tx.Rollback()
+  defer tx.Rollback() // runs whether the test passed or failed
 
   fn(t, tx)
 }
 
-// SetupTestData loads demo data from migrations/demo_data.sql
-// Call once before running tests (e.g., in TestMain)
-// IMPORTANT: Keep in sync with schema and demo_data.sql
-func SetupTestData(t *testing.T) {
+// TestTenantTx is TestTx with a tenant scope, and is what tenant-scoped
+// models must be tested through. Using TestTx for them tests unscoped
+// behaviour that production never exercises.
+func TestTenantTx(t *testing.T, tenantID int64, fn func(t *testing.T, tx *gorm.DB)) {
   t.Helper()
 
-  // Truncate all tables for clean slate
-  Get().MustExec(`
-    TRUNCATE TABLE "user", setting CASCADE;
-  `)
+  tx := Unscoped().Begin()
+  if tx.Error != nil {
+    t.Fatalf("failed to begin tx: %v", tx.Error)
+  }
+  defer tx.Rollback()
 
-  // Load demo data (keep in sync with migrations/demo_data.sql)
-  Get().MustExec(`
-    INSERT INTO "user" (id, email, name, avatar_url, created_at, updated_at) VALUES
-      (1, 'alice@example.com', 'Alice', 'https://i.pravatar.cc/150?u=alice', NOW(), NOW()),
-      (2, 'bob@example.com', 'Bob', 'https://i.pravatar.cc/150?u=bob', NOW(), NOW()),
-      (3, 'charlie@example.com', 'Charlie', 'https://i.pravatar.cc/150?u=charlie', NOW(), NOW());
+  if isPostgres {
+    if err := tx.Exec(
+      `SELECT set_config('app.tenant_id', ?::text, true)`, tenantID).Error; err != nil {
+      t.Fatalf("failed to set tenant: %v", err)
+    }
+  } else {
+    tx = tx.Set("app:tenant_id", tenantID)
+  }
 
-    INSERT INTO setting (id, user_id, key, value, created_at, updated_at) VALUES
-      (1, 1, 'theme', 'dark', NOW(), NOW()),
-      (2, 1, 'language', 'en', NOW(), NOW()),
-      (3, 1, 'timezone', 'America/New_York', NOW(), NOW()),
-      (4, 2, 'theme', 'light', NOW(), NOW()),
-      (5, 2, 'notifications', 'true', NOW(), NOW());
-  `)
+  fn(t, tx)
+}
 
-  // Reset sequences
-  Get().MustExec(`
-    SELECT setval(pg_get_serial_sequence('"user"', 'id'), (SELECT COALESCE(MAX(id), 0) FROM "user"));
-    SELECT setval(pg_get_serial_sequence('setting', 'id'), (SELECT COALESCE(MAX(id), 0) FROM setting));
-  `)
+// SetupTestData resets the database and loads fixtures.
+// Runs on the OWNER connection: TRUNCATE requires ownership, and the reset
+// must see every tenant's rows.
+func SetupTestData(t *testing.T) {
+  t.Helper()
+  g := Unscoped()
+
+  g.Exec(`TRUNCATE TABLE "user", setting RESTART IDENTITY CASCADE`)
+
+  users := []User{
+    {ID: 1, Email: "alice@example.com", Name: "Alice"},
+    {ID: 2, Email: "bob@example.com", Name: "Bob"},
+    {ID: 3, Email: "charlie@example.com", Name: "Charlie"},
+  }
+  if err := g.Create(&users).Error; err != nil {
+    t.Fatalf("seed users: %v", err)
+  }
+
+  settings := []Setting{
+    {UserID: 1, Key: "theme", Value: "dark"},
+    {UserID: 1, Key: "language", Value: "en"},
+    {UserID: 2, Key: "theme", Value: "light"},
+  }
+  if err := g.Create(&settings).Error; err != nil {
+    t.Fatalf("seed settings: %v", err)
+  }
 }
 ```
+
+`RESTART IDENTITY` on the truncate resets the sequences, so explicit IDs in
+fixtures do not collide with generated ones later. Without it the first
+generated insert reuses id 1 and fails on the primary key.
+
+**The test suite connects as the runtime role, not the owner** — see
+[Running against PostgreSQL](#running-against-postgresql). `Unscoped()` above is
+the owner handle used only by these helpers, for setup and for opening the
+transaction; the code under test still goes through the scoped path.
 
 ### Usage in Tests
 
@@ -171,7 +200,7 @@ func SetupTestData(t *testing.T) {
 func TestSetting_Set(t *testing.T) {
   db.SetupTestData(t) // Load demo data once
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     setting := Setting{
       UserID: 1,
       Key:    "email_notifications",
@@ -373,7 +402,7 @@ import (
 func TestUser_Create(t *testing.T) {
   db.SetupTestData(t) // Load demo data once
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     user := User{
       Email: "newuser@example.com",
       Name:  "New User",
@@ -398,7 +427,7 @@ func TestUser_Create(t *testing.T) {
 func TestUser_GetByEmail(t *testing.T) {
   db.SetupTestData(t) // Demo data includes alice@example.com
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     user, err := GetUserByEmail(context.Background(), "alice@example.com")
 
     require.NoError(t, err)
@@ -410,7 +439,7 @@ func TestUser_GetByEmail(t *testing.T) {
 func TestUser_Update(t *testing.T) {
   db.SetupTestData(t)
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     // Get existing user
     user, err := GetUserByEmail(context.Background(), "alice@example.com")
     require.NoError(t, err)
@@ -430,7 +459,7 @@ func TestUser_Update(t *testing.T) {
 func TestUser_Delete(t *testing.T) {
   db.SetupTestData(t)
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     user, err := GetUserByEmail(context.Background(), "charlie@example.com")
     require.NoError(t, err)
 
@@ -486,7 +515,7 @@ func TestSetting_Set(t *testing.T) {
 
   for _, tt := range tests {
     t.Run(tt.name, func(t *testing.T) {
-      db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+      db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
         setting := Setting{
           UserID: tt.userID,
           Key:    tt.key,
@@ -509,7 +538,7 @@ func TestSetting_Set(t *testing.T) {
 func TestSetting_GetUserSettings(t *testing.T) {
   db.SetupTestData(t)
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     // Alice has 3 settings in demo data: theme, language, timezone
     settings, err := GetUserSettings(context.Background(), 1)
     require.NoError(t, err)
@@ -527,7 +556,7 @@ func TestSetting_GetUserSettings(t *testing.T) {
 func TestSetting_Delete(t *testing.T) {
   db.SetupTestData(t)
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     setting := &Setting{
       UserID: 1,
       Key:    "theme",
@@ -582,7 +611,7 @@ func setupRouter() *gin.Engine {
 func TestShowProfile(t *testing.T) {
   db.SetupTestData(t)
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     router := setupRouter()
 
     w := httptest.NewRecorder()
@@ -602,7 +631,7 @@ func TestShowProfile(t *testing.T) {
 func TestUpdateProfile(t *testing.T) {
   db.SetupTestData(t)
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     router := setupRouter()
 
     w := httptest.NewRecorder()
@@ -641,7 +670,7 @@ import (
 func TestShowSettings(t *testing.T) {
   db.SetupTestData(t)
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     router := setupRouter()
 
     w := httptest.NewRecorder()
@@ -661,7 +690,7 @@ func TestShowSettings(t *testing.T) {
 func TestUpdateSetting(t *testing.T) {
   db.SetupTestData(t)
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     router := setupRouter()
 
     w := httptest.NewRecorder()
@@ -685,7 +714,7 @@ func TestUpdateSetting(t *testing.T) {
 func TestDeleteSetting(t *testing.T) {
   db.SetupTestData(t)
 
-  db.TestTx(t, func(t *testing.T, tx *sqlx.Tx) {
+  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
     router := setupRouter()
 
     w := httptest.NewRecorder()
@@ -703,6 +732,134 @@ func TestDeleteSetting(t *testing.T) {
     assert.Equal(t, 0, count)
   })
 }
+```
+
+---
+
+## Tenant Isolation Tests
+
+`tenancy: shared` only. These are the tests that decide whether your product
+leaks customer data, and there are five of them. Write them once, early, and
+never let them be skipped.
+
+```go
+func TestTenantIsolation(t *testing.T) {
+  db.SetupTestData(t)
+  ctx := context.Background()
+
+  // 1. A tenant cannot read another tenant's rows.
+  require.NoError(t, db.WithTenant(ctx, 1, func(tx *gorm.DB) error {
+    return tx.Create(&models.Post{TenantID: 1, UserID: 1, Title: "one"}).Error
+  }))
+
+  var count int64
+  require.NoError(t, db.WithTenant(ctx, 2, func(tx *gorm.DB) error {
+    return tx.Model(&models.Post{}).Count(&count).Error
+  }))
+  assert.Zero(t, count, "tenant 2 must not see tenant 1 rows")
+
+  // 2. A tenant cannot write into another tenant. This is the WITH CHECK
+  //    half of the policy, and it passes silently on a USING-only policy.
+  err := db.WithTenant(ctx, 2, func(tx *gorm.DB) error {
+    return tx.Create(&models.Post{TenantID: 1, UserID: 1, Title: "forged"}).Error
+  })
+  assert.Error(t, err, "cross-tenant INSERT must be rejected")
+
+  // 3. No tenant set means no rows, not all rows.
+  assert.ErrorIs(t,
+    db.WithTenant(ctx, 0, func(tx *gorm.DB) error { return nil }),
+    db.ErrNoTenant)
+
+  // 4. The shared handle fails closed rather than leaking.
+  var leaked int64
+  require.NoError(t, db.Get().Model(&models.Post{}).Count(&leaked).Error)
+  assert.Zero(t, leaked, "db.Get() must not see tenant rows")
+
+  // 5. A tenant cannot update or delete across the boundary.
+  res := db.Get()
+  require.NoError(t, db.WithTenant(ctx, 2, func(tx *gorm.DB) error {
+    res = tx.Model(&models.Post{}).Where("1 = 1").Update("title", "hijacked")
+    return nil
+  }))
+  assert.Zero(t, res.RowsAffected, "tenant 2 must not update tenant 1 rows")
+  _ = res
+}
+```
+
+Add one more per tenant-scoped table, asserting it is actually covered:
+
+```go
+func TestEveryTenantTableHasRLS(t *testing.T) {
+  type row struct{ Relname string; Rls, Forced bool; HasCheck bool }
+  var rows []row
+  require.NoError(t, db.Unscoped().Raw(`
+    SELECT c.relname,
+           c.relrowsecurity      AS rls,
+           c.relforcerowsecurity AS forced,
+           bool_or(p.polwithcheck IS NOT NULL) AS has_check
+      FROM pg_class c
+      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id'
+      LEFT JOIN pg_policy p ON p.polrelid = c.oid
+     WHERE c.relkind = 'r'
+     GROUP BY c.relname, c.relrowsecurity, c.relforcerowsecurity`).Scan(&rows).Error)
+
+  require.NotEmpty(t, rows)
+  for _, r := range rows {
+    assert.True(t, r.Rls,      "%s has tenant_id but RLS is not enabled", r.Relname)
+    assert.True(t, r.Forced,   "%s has RLS but not FORCE -- owners bypass it", r.Relname)
+    assert.True(t, r.HasCheck, "%s policy has no WITH CHECK -- cross-tenant INSERT allowed", r.Relname)
+  }
+}
+```
+
+That query catches the table someone adds next month and forgets to protect,
+which is the realistic way isolation breaks after launch.
+
+---
+
+## Testing the Layers
+
+Each optional layer has its own testing notes in its own doc. The short version:
+
+| Layer | Approach | Detail |
+|---|---|---|
+| `jobs` | Test handlers as plain functions; drain the queue synchronously in controller tests with `jobs.WorkOff(t)` rather than running a worker | [jobs.md](jobs.md#testing) |
+| `realtime` | Drive the hub in-process, no network. Assert eviction, expiry, gap behaviour | [realtime.md](realtime.md#testing) |
+| `ai` | Application tests use `ai.Fake`; parser tests use recorded fixtures in `testdata/`; prompt quality lives in a separate eval suite | [ai.md](ai.md#testing) |
+
+The rule shared by all three: **no test in `go test ./...` touches the network.**
+A suite that calls a model provider is slow, flaky, costly, and
+non-deterministic. Evals are a separate target, run on prompt changes and on a
+schedule.
+
+```makefile
+test:
+	go test ./... -race -cover
+
+evals:
+	go test ./evals/... -tags=evals -timeout 30m
+```
+
+---
+
+## Running against PostgreSQL
+
+Two rules, both of which invalidate the suite if broken.
+
+**Test as the runtime role, never the owner.** Table owners bypass Row-Level
+Security. A CI job connecting as the owner passes every isolation test above on
+a completely unprotected database — the tests are green and meaningless.
+
+**Test on PostgreSQL even if development uses SQLite.** The two isolation
+mechanisms are different code paths that fail differently, and only one of them
+ships. Running the suite on SQLite alone tells you nothing about the tenancy of
+your production system.
+
+```bash
+# What the app uses at runtime -- and what the tests must use.
+export DATABASE_URL="postgres://app_user:app@localhost:5432/app?sslmode=disable"
+# Migrations and fixtures only.
+export DATABASE_OWNER_URL="postgres://app_owner:app@localhost:5432/app?sslmode=disable"
 ```
 
 ---
@@ -759,7 +916,7 @@ jobs:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_USER: app
+          POSTGRES_USER: app_owner
           POSTGRES_PASSWORD: app
           POSTGRES_DB: app
         options: >-
@@ -785,18 +942,29 @@ jobs:
 
       - name: Run migrations
         env:
-          DATABASE_URL: postgres://app:app@localhost/app?sslmode=disable
-        run: goose -dir migrations postgres "$DATABASE_URL" up
+          DATABASE_OWNER_URL: postgres://app_owner:app@localhost/app?sslmode=disable
+        run: goose -dir migrations postgres "$DATABASE_OWNER_URL" up
 
-      - name: Load demo data
+      # tenancy: shared -- the runtime role must NOT own the tables, or RLS
+      # is bypassed and every isolation test passes on an open database.
+      - name: Create runtime role
         env:
-          DATABASE_URL: postgres://app:app@localhost/app?sslmode=disable
-        run: psql "$DATABASE_URL" -f migrations/demo_data.sql
+          PGPASSWORD: app
+        run: |
+          psql -h localhost -U app_owner -d app <<'SQL'
+          CREATE ROLE app_user LOGIN PASSWORD 'app' NOBYPASSRLS;
+          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user;
+          GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO app_user;
+          SQL
 
       - name: Run tests
         env:
-          DATABASE_URL: postgres://app:app@localhost/app?sslmode=disable
+          DATABASE_URL: postgres://app_user:app@localhost/app?sslmode=disable
+          DATABASE_OWNER_URL: postgres://app_owner:app@localhost/app?sslmode=disable
         run: go test ./... -v -cover -race
+
+      - name: Check docs links
+        run: ./scripts/check-links.py
 
       - name: Run linter
         run: |
@@ -826,7 +994,7 @@ jobs:
 - ❌ **Don't use mocks for database** (test real queries)
 - ❌ **Don't skip tests** (run all tests on every commit)
 - ❌ **Don't ignore flaky tests** (fix or remove them)
-- ❌ **Don't test framework code** (test your code, not Gin/sqlx)
+- ❌ **Don't test framework code** (test your code, not Gin/GORM)
 
 ### Coverage Targets
 

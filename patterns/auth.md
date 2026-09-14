@@ -77,6 +77,17 @@ const (
   TokenLength     = 48 // 384 bits
 )
 
+type MagicLink struct {
+  ID        int64  `gorm:"primaryKey"`
+  Token     string `gorm:"not null;uniqueIndex"`
+  Email     string `gorm:"not null;index"`
+  ExpiresAt time.Time  `gorm:"not null;index"`
+  UsedAt    *time.Time
+  CreatedAt time.Time
+}
+
+func (MagicLink) TableName() string { return "magic_link" }
+
 // GenerateMagicLink creates a magic link token for an email
 func GenerateMagicLink(ctx context.Context, email string) (string, error) {
   // Generate cryptographically secure token
@@ -87,15 +98,12 @@ func GenerateMagicLink(ctx context.Context, email string) (string, error) {
   token := base64.RawURLEncoding.EncodeToString(b)
 
   // Store in database
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
-  _, err := db.Get().ExecContext(ctx,
-    `INSERT INTO magic_link (token, email, expires_at)
-     VALUES ($1, $2, $3)`,
-    token, email, time.Now().Add(MagicLinkExpiry))
-
-  if err != nil {
+  link := MagicLink{
+    Token:     token,
+    Email:     email,
+    ExpiresAt: time.Now().Add(MagicLinkExpiry),
+  }
+  if err := db.Get().WithContext(ctx).Create(&link).Error; err != nil {
     return "", err
   }
 
@@ -104,58 +112,37 @@ func GenerateMagicLink(ctx context.Context, email string) (string, error) {
 
 // VerifyMagicLink verifies a token and returns the associated email
 func VerifyMagicLink(ctx context.Context, token string) (string, error) {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
+  // Claim the link and check it in one statement. Two steps -- read, then
+  // mark used -- lets two concurrent requests both pass the check and both
+  // sign in on a single-use token.
+  result := db.Get().WithContext(ctx).
+    Model(&MagicLink{}).
+    Where("token = ? AND used_at IS NULL AND expires_at > ?", token, time.Now()).
+    Update("used_at", time.Now())
 
-  var email string
-  var expiresAt time.Time
-  var usedAt *time.Time
+  if result.Error != nil {
+    return "", result.Error
+  }
+  if result.RowsAffected == 0 {
+    // Unknown, already used, or expired. Do not say which: distinguishing
+    // them tells an attacker whether a token ever existed.
+    return "", errors.New("invalid or expired magic link")
+  }
 
-  err := db.Get().QueryRowContext(ctx,
-    `SELECT email, expires_at, used_at
-     FROM magic_link
-     WHERE token = $1`,
-    token).Scan(&email, &expiresAt, &usedAt)
-
-  if err != nil {
-    if err == sql.ErrNoRows {
-      return "", errors.New("invalid or expired magic link")
-    }
+  var link MagicLink
+  if err := db.Get().WithContext(ctx).
+    Where("token = ?", token).First(&link).Error; err != nil {
     return "", err
   }
-
-  // Check if already used
-  if usedAt != nil {
-    return "", errors.New("magic link already used")
-  }
-
-  // Check if expired
-  if time.Now().After(expiresAt) {
-    return "", errors.New("magic link expired")
-  }
-
-  // Mark as used
-  _, err = db.Get().ExecContext(ctx,
-    `UPDATE magic_link SET used_at = NOW() WHERE token = $1`,
-    token)
-
-  if err != nil {
-    return "", err
-  }
-
-  return email, nil
+  return link.Email, nil
 }
 
 // CleanupExpiredLinks removes old magic links (run periodically)
 func CleanupExpiredLinks(ctx context.Context) error {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
-  _, err := db.Get().ExecContext(ctx,
-    `DELETE FROM magic_link
-     WHERE expires_at < NOW() - INTERVAL '1 day'`)
-
-  return err
+  cutoff := time.Now().Add(-24 * time.Hour)
+  return db.Get().WithContext(ctx).
+    Where("expires_at < ?", cutoff).
+    Delete(&MagicLink{}).Error
 }
 ```
 

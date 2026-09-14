@@ -57,6 +57,7 @@ func main() {
   }
 
   // 3. Connect to database
+  db.SetDriver(cfg.Driver)
   database, err := db.Connect(cfg.Driver, cfg.DatabaseURL)
   if err != nil {
     log.Fatal().Err(err).Msg("failed to connect to database")

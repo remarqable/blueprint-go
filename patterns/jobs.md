@@ -377,12 +377,13 @@ func (w *Worker) run(ctx context.Context, j *Job) error {
 ```
 
 **A handler never opens its own connection.** It takes the transaction from
-context. A handler that reaches for `db.Get()` has silently left the tenant
-scope, and every query it makes sees every tenant's data. This is the single
-most likely way to leak data in a multi-tenant system, because it looks like
-ordinary code and no test catches it.
+context. A handler that reaches for `db.Unscoped()` is on the owner connection
+and sees every tenant's data — that is the dangerous one, and it looks like
+ordinary code. `db.Get()` is less bad but still wrong: under RLS it fails closed
+and the handler silently processes nothing.
 
-Lint for it: `db.Get()` outside `internal/platform` is a build failure.
+Lint for it: `db.Unscoped()` outside `internal/platform` and the few named
+platform jobs is a build failure.
 
 ---
 

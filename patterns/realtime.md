@@ -189,8 +189,8 @@ connection held by gateway instance 5.
 ### Postgres LISTEN/NOTIFY
 
 ```go
-_, err := tx.ExecContext(ctx, `SELECT pg_notify($1, $2)`,
-  "channel_"+strconv.FormatInt(channelID, 10), payload)
+err := tx.WithContext(ctx).Exec(`SELECT pg_notify(?, ?)`,
+  "channel_"+strconv.FormatInt(channelID, 10), payload).Error
 ```
 
 - **For:** no new infrastructure; fires on commit, so subscribers never see a

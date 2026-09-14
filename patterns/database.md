@@ -120,41 +120,88 @@ status order_status DEFAULT 'pending'
 
 ### Database Handle Pattern (GORM)
 
+Two handles, deliberately. The runtime handle connects as a non-owner role and
+is subject to Row-Level Security; the owner handle bypasses it and exists for
+migrations, workers and platform tooling.
+
 ```go
 // internal/platform/db/db.go
 package db
 
 import (
+  "context"
+  "fmt"
+  "strings"
+
   "gorm.io/gorm"
-  "gorm.io/driver/sqlite"
   "gorm.io/driver/postgres"
+  "gorm.io/driver/sqlite"
 )
 
-var gdb *gorm.DB
+var (
+  gdb        *gorm.DB // runtime: app_user, RLS applies
+  gdbOwner   *gorm.DB // owner: bypasses RLS, sees every tenant
+  isPostgres bool
+)
 
-func SetDB(database *gorm.DB) { gdb = database }
+// Connect opens a handle for the configured driver.
+func Connect(driver, dsn string) (*gorm.DB, error) {
+  cfg := &gorm.Config{
+    // Callers pass context explicitly; GORM's default logger is noisy.
+    SkipDefaultTransaction: true,
+  }
+
+  switch driver {
+  case "postgres":
+    return gorm.Open(postgres.Open(dsn), cfg)
+  case "sqlite":
+    if !strings.Contains(dsn, "_foreign_keys") {
+      return nil, fmt.Errorf("sqlite dsn must set _foreign_keys=on, " +
+        "or every ON DELETE CASCADE is silently ignored")
+    }
+    return gorm.Open(sqlite.Open(dsn), cfg)
+  default:
+    return nil, fmt.Errorf("unknown driver %q", driver)
+  }
+}
+
+func SetDB(database *gorm.DB)      { gdb = database }
+func SetOwnerDB(database *gorm.DB) { gdbOwner = database }
+func SetDriver(driver string)      { isPostgres = driver == "postgres" }
+
+// Get returns the runtime handle. Correct for tables with no tenant_id
+// (user, tenant, session) and for platform code.
+//
+// On a tenant-scoped table it returns ZERO ROWS, because no tenant is set.
+// If a list is mysteriously empty, this is why -- use WithTenant.
 func Get() *gorm.DB { return gdb }
 
-// ConnectSQLite connects to SQLite database
-func ConnectSQLite(path string) (*gorm.DB, error) {
-  return gorm.Open(sqlite.Open(path), &gorm.Config{})
+// Unscoped returns the owner handle. It bypasses RLS and sees every tenant.
+// Migrations, workers claiming jobs, platform admin, billing reconciliation.
+// Every call site is a deliberate decision, and CI checks where it appears.
+func Unscoped() *gorm.DB {
+  if gdbOwner == nil {
+    return gdb // single-role setups (tenancy: personal, sqlite dev)
+  }
+  return gdbOwner
 }
 
-// ConnectPostgres connects to PostgreSQL database
-func ConnectPostgres(dsn string) (*gorm.DB, error) {
-  return gorm.Open(postgres.Open(dsn), &gorm.Config{})
-}
-
-// WithTx wraps operations in a transaction
-func WithTx(fn func(tx *gorm.DB) error) error {
-  return gdb.Transaction(fn)
-}
-
-// WithContext returns DB with context for timeouts
-func WithContext(ctx context.Context) *gorm.DB {
-  return gdb.WithContext(ctx)
+// WithTx wraps non-tenant work in a transaction.
+// For tenant-scoped work use WithTenant, which also establishes the scope.
+func WithTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+  return gdb.WithContext(ctx).Transaction(fn)
 }
 ```
+
+`SkipDefaultTransaction` turns off GORM's habit of wrapping every single
+`Create`/`Update`/`Delete` in its own transaction. You want transactions where
+you asked for them, not implicitly around each statement — and with
+`tenancy: shared` the implicit ones would not carry the tenant scope anyway.
+
+The SQLite guard is not fussiness: SQLite enforces no foreign keys by default,
+so without `_foreign_keys=on` every `ON DELETE CASCADE` in your schema does
+nothing and you find out when orphaned rows appear. Add `_journal_mode=WAL`
+too, or concurrent readers block on every write.
 
 ### Connection Pooling (PostgreSQL only)
 
@@ -564,8 +611,9 @@ middleware against the shared handle, which is both outside a transaction and on
 an arbitrary connection. It is a no-op twice over.
 
 GORM makes failure 4 easier to hit than a raw driver would, because `db.Get()`
-returns a usable handle from anywhere. Treat any tenant-scoped query issued
-outside `WithTenant` as a bug — see [Enforcing the boundary](#enforcing-the-boundary).
+returns a usable handle from anywhere. With RLS configured correctly this fails
+closed — the query returns zero rows rather than another tenant's — but it is
+still a bug. See [Enforcing the boundary](#enforcing-the-boundary).
 
 ### Roles
 
@@ -791,26 +839,41 @@ file.
 
 ### Enforcing the boundary
 
-`db.Get()` returning a usable global handle is convenient and is the main way
-isolation gets lost. Two mechanical guards:
+`db.Get()` returns a usable handle from anywhere, and reaching for it is how
+tenant scope gets lost. The good news is that a correct RLS setup **fails
+closed**: a query issued through `db.Get()` as `app_user`, outside a transaction
+where `set_config` ran, matches no policy and returns **zero rows**. That is a
+loud, obvious bug in development rather than a silent cross-tenant leak.
+
+So the rule is enforced by convention plus CI, not by crippling the handle:
 
 ```go
-// Make the unscoped handle explicit and greppable.
-func Get() *gorm.DB {
-  panic("db.Get() is not tenant-scoped; use db.WithTenant or db.Unscoped()")
-}
+// Get returns the shared handle. Correct for tables with no tenant_id
+// (user, tenant, session) and for platform code.
+//
+// On a tenant-scoped table it returns zero rows, because no tenant is set.
+// If a list is mysteriously empty, this is why -- use WithTenant.
+func Get() *gorm.DB { return gdb }
 
-// Unscoped is for migrations, workers claiming jobs, and platform admin.
+// Unscoped is the owner connection: it bypasses RLS and sees every tenant.
+// Migrations, workers claiming jobs, platform admin, billing reconciliation.
 // Every call site is a deliberate decision.
-func Unscoped() *gorm.DB { return gdb }
+func Unscoped() *gorm.DB { return gdbOwner }
 ```
 
-Then a CI check that `db.Unscoped()` appears only where it should:
+Two checks worth having in CI:
 
 ```bash
-! grep -rn "db.Unscoped()" internal/controllers internal/models \
-  || { echo "tenant scope escaped in controllers/models"; exit 1; }
+# The owner connection must never appear in request-handling code.
+! grep -rn "db.Unscoped()" internal/controllers internal/models   || { echo "owner connection used in controllers/models"; exit 1; }
+
+# Tenant-scoped models should not query through the shared handle.
+! grep -rn "db.Get()" internal/models/tenant_scoped   || { echo "tenant-scoped model bypassing WithTenant"; exit 1; }
 ```
+
+**On SQLite there is no fail-closed backstop from the database**, so the
+callbacks supply one: a query against a tenant-scoped table with no tenant set
+returns `ErrNoTenant` rather than every row. Same symptom, raised in-process.
 
 ### Outside the request cycle
 
@@ -917,6 +980,8 @@ Per application:
 - [ ] Migrations connect as the owner, on a separate DSN
 - [ ] Every tenant-scoped query goes through `WithTenant`
 - [ ] `db.Unscoped()` appears only in platform code, checked in CI
+- [ ] An empty result from a tenant-scoped table is understood as a missing
+      scope, not an empty table
 - [ ] Jobs carry `tenant_id` and re-enter `WithTenant`
 - [ ] Raw `Exec`/`Raw` against tenant tables carry their own predicate
 - [ ] Isolation tests run on PostgreSQL, as the runtime role

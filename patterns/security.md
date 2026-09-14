@@ -380,29 +380,51 @@ user.Email = strings.TrimSpace(strings.ToLower(user.Email))
 
 ## SQL Injection Prevention
 
-### Use Parameterized Queries (sqlx)
+### Use Parameterized Queries
+
+GORM's builder parameterises automatically. The risk is in the places that take
+raw strings.
 
 ```go
-// ✅ Safe (parameterized)
-db.Get().QueryRowContext(ctx,
-  `SELECT * FROM "user" WHERE id = $1 AND email = $2`,
-  userID, email)
+// ✅ Safe -- builder, values are bound
+db.Get().WithContext(ctx).
+  Where("id = ? AND email = ?", userID, email).First(&user)
 
-// ❌ NEVER do this (vulnerable to SQL injection)
-query := fmt.Sprintf("SELECT * FROM \"user\" WHERE email = '%s'", email)
-db.Get().QueryRowContext(ctx, query)
+// ✅ Safe -- Raw/Exec with placeholders
+db.Get().WithContext(ctx).
+  Raw(`SELECT * FROM "user" WHERE email = ?`, email).Scan(&user)
+
+// ❌ NEVER -- string interpolation into any of them
+q := fmt.Sprintf(`SELECT * FROM "user" WHERE email = '%s'`, email)
+db.Get().WithContext(ctx).Raw(q).Scan(&user)
 ```
 
-### Named Parameters
+### Identifiers cannot be parameterised
+
+Placeholders bind *values*, never table names, column names, or sort direction.
+A sort order taken from a query string and pasted into `Order()` is an injection
+point, and it is the one that survives code review because it does not look like
+SQL.
 
 ```go
-// ✅ Safe (named parameters with sqlx)
-query := `SELECT * FROM setting WHERE user_id = :user_id AND key = :key`
-rows, err := db.Get().NamedQueryContext(ctx, query, map[string]interface{}{
-  "user_id": userID,
-  "key":     key,
-})
+// ❌ Vulnerable -- c.Query returns whatever the client sent
+db.Get().Order(c.Query("sort")).Find(&users)
+
+// ✅ Safe -- allowlist, never the raw input
+var allowed = map[string]string{
+  "newest": "created_at DESC",
+  "oldest": "created_at ASC",
+  "name":   "name ASC",
+}
+order, ok := allowed[c.Query("sort")]
+if !ok {
+  order = "created_at DESC"
+}
+db.Get().Order(order).Find(&users)
 ```
+
+The same applies to `Table()`, `Select()` with computed column lists, and
+`Group()`. If it is an identifier, it comes from an allowlist in your code.
 
 ### Dynamic Queries (Use Whitelists)
 
@@ -424,7 +446,7 @@ func ListUsers(ctx context.Context, sortBy string) ([]User, error) {
   // Safe because sortBy is whitelisted
 
   var users []User
-  err := db.Get().SelectContext(ctx, &users, query)
+  err := db.Get().WithContext(ctx).Raw(query).Scan(&users).Error
   return users, err
 }
 ```

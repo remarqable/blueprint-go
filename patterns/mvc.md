@@ -134,53 +134,41 @@ func isValidEmail(email string) bool {
 ```go
 // GetUserByID retrieves a user by ID
 func GetUserByID(ctx context.Context, userID int64) (*User, error) {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
   var user User
-  err := db.Get().GetContext(ctx, &user,
-    `SELECT * FROM "user" WHERE id = $1`,
-    userID)
+  err := db.Get().WithContext(ctx).First(&user, userID).Error
 
-  if err == sql.ErrNoRows {
+  if goerrors.Is(err, gorm.ErrRecordNotFound) {
     return nil, errors.New(errors.CodeNotFound, "user not found")
   }
-
   return &user, err
 }
 
 // GetUserByEmail retrieves a user by email
 func GetUserByEmail(ctx context.Context, email string) (*User, error) {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
   email = strings.TrimSpace(strings.ToLower(email))
 
   var user User
-  err := db.Get().GetContext(ctx, &user,
-    `SELECT * FROM "user" WHERE email = $1`,
-    email)
+  err := db.Get().WithContext(ctx).Where("email = ?", email).First(&user).Error
 
-  if err == sql.ErrNoRows {
+  if goerrors.Is(err, gorm.ErrRecordNotFound) {
     return nil, errors.New(errors.CodeNotFound, "user not found")
   }
-
   return &user, err
 }
 
-// ListUsers retrieves all users (with optional pagination)
+// ListUsers retrieves a page of users.
+// Offset pagination is fine on a small table. On the dominant table use a
+// cursor instead -- see patterns/scale.md#cursor-pagination.
 func ListUsers(ctx context.Context, limit, offset int) ([]User, error) {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
   if limit == 0 {
-    limit = 50 // default
+    limit = 50
   }
 
   var users []User
-  err := db.Get().SelectContext(ctx, &users,
-    `SELECT * FROM "user" ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
-    limit, offset)
+  err := db.Get().WithContext(ctx).
+    Order("created_at DESC").
+    Limit(limit).Offset(offset).
+    Find(&users).Error
 
   return users, err
 }
@@ -194,21 +182,24 @@ package models
 
 import (
   "context"
-  "database/sql"
+  goerrors "errors"
   "strings"
   "time"
+
+  "gorm.io/gorm"
+  "gorm.io/gorm/clause"
 
   "yourapp/internal/platform/db"
   "yourapp/internal/platform/errors"
 )
 
 type Setting struct {
-  ID        int64     `db:"id" json:"id"`
-  UserID    int64     `db:"user_id" json:"user_id"`
-  Key       string    `db:"key" json:"key"`
-  Value     string    `db:"value" json:"value"`
-  CreatedAt time.Time `db:"created_at" json:"created_at"`
-  UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
+  ID        int64     `gorm:"primaryKey" json:"id"`
+  UserID    int64     `gorm:"not null;uniqueIndex:uq_setting_user_key,priority:1" json:"user_id"`
+  Key       string    `gorm:"not null;uniqueIndex:uq_setting_user_key,priority:2" json:"key"`
+  Value     string    `gorm:"not null" json:"value"`
+  CreatedAt time.Time `json:"created_at"`
+  UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Validate performs validation
@@ -233,67 +224,48 @@ func (s *Setting) Set(ctx context.Context) error {
     return err
   }
 
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
-  // PostgreSQL upsert
-  return db.Get().QueryRowContext(ctx,
-    `INSERT INTO setting (user_id, key, value)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (user_id, key)
-     DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
-     RETURNING id, created_at, updated_at`,
-    s.UserID, s.Key, s.Value,
-  ).Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt)
+  // Upsert. Works on both PostgreSQL and SQLite.
+  return db.Get().WithContext(ctx).Clauses(clause.OnConflict{
+    Columns:   []clause.Column{{Name: "user_id"}, {Name: "key"}},
+    DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
+  }).Create(s).Error
 }
 
 // Delete removes a setting
 func (s *Setting) Delete(ctx context.Context) error {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
+  result := db.Get().WithContext(ctx).
+    Where("user_id = ? AND key = ?", s.UserID, s.Key).
+    Delete(&Setting{})
 
-  result, err := db.Get().ExecContext(ctx,
-    `DELETE FROM setting WHERE user_id = $1 AND key = $2`,
-    s.UserID, s.Key)
-
-  if err != nil {
-    return err
+  if result.Error != nil {
+    return result.Error
   }
-
-  rows, _ := result.RowsAffected()
-  if rows == 0 {
+  if result.RowsAffected == 0 {
     return errors.New(errors.CodeNotFound, "setting not found")
   }
-
   return nil
 }
 
 // GetUserSetting retrieves a specific setting for a user
 func GetUserSetting(ctx context.Context, userID int64, key string) (*Setting, error) {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
   var setting Setting
-  err := db.Get().GetContext(ctx, &setting,
-    `SELECT * FROM setting WHERE user_id = $1 AND key = $2`,
-    userID, key)
+  err := db.Get().WithContext(ctx).
+    Where("user_id = ? AND key = ?", userID, key).
+    First(&setting).Error
 
-  if err == sql.ErrNoRows {
+  if goerrors.Is(err, gorm.ErrRecordNotFound) {
     return nil, errors.New(errors.CodeNotFound, "setting not found")
   }
-
   return &setting, err
 }
 
 // GetUserSettings retrieves all settings for a user
 func GetUserSettings(ctx context.Context, userID int64) ([]Setting, error) {
-  ctx, cancel := db.WithTimeout(ctx, 0)
-  defer cancel()
-
   var settings []Setting
-  err := db.Get().SelectContext(ctx, &settings,
-    `SELECT * FROM setting WHERE user_id = $1 ORDER BY key`,
-    userID)
+  err := db.Get().WithContext(ctx).
+    Where("user_id = ?", userID).
+    Order("key").
+    Find(&settings).Error
 
   return settings, err
 }
@@ -987,9 +959,9 @@ POST /profile
 
 ❌ **Don't:**
 - Don't put HTTP logic in models (no `gin.Context`)
-- Don't access global state (except `db.Get()`)
+- Don't access global state (except `db.Get()`, and never `db.Unscoped()`)
 - Don't log in models (return errors instead)
-- Don't hardcode timeouts (use `db.WithTimeout`)
+- Don't hardcode timeouts (pass a context with one: `tx.WithContext(ctx)`)
 
 ### Controllers
 

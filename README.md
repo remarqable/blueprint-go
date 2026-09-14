@@ -119,6 +119,17 @@ The blueprint is one architecture with optional layers, not a menu. Establish
 the project configuration in [claude.md](claude.md#project-configuration) first,
 then read only the layers whose condition holds.
 
+### Checking the docs
+
+Cross-references between pattern docs are load-bearing: an agent that follows a
+dead link invents its own answer. `scripts/check-links.py` verifies every
+internal link and heading anchor, and runs in CI.
+
+```bash
+./scripts/check-links.py          # verify
+./scripts/check-links.py --list   # print every anchor
+```
+
 ---
 
 ## 🏗️ Architecture

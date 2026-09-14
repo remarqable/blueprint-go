@@ -237,7 +237,12 @@ r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 r.GET("/readyz", func(c *gin.Context) {
   ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
   defer cancel()
-  if err := db.Get().PingContext(ctx); err != nil {
+
+  sqlDB, err := db.Get().DB()
+  if err == nil {
+    err = sqlDB.PingContext(ctx)
+  }
+  if err != nil {
     c.JSON(503, gin.H{"status": "degraded", "db": err.Error()})
     return
   }

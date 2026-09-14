@@ -262,9 +262,11 @@ measurements say so. See [scale.md § What Not to Do Yet](patterns/scale.md#what
 - **Pointers for models**: `func (u *User) ...`
 - **Always pass context** to DB calls (`tx.WithContext(ctx)`), with a timeout
 - **No global singletons** outside `platform/db`
-- **Never take the shared handle for tenant-scoped work.** `db.Get()` panics by
-  design; `db.WithTenant` is the scoped path and `db.Unscoped()` the deliberate
-  escape hatch. See [database.md](patterns/database.md#enforcing-the-boundary).
+- **Tenant-scoped queries go through `db.WithTenant`**, never the shared
+  `db.Get()` handle. Under RLS the shared handle fails closed and returns zero
+  rows, so the symptom is an empty list rather than a leak — still a bug.
+  `db.Unscoped()` is the owner connection and is platform-only.
+  See [database.md](patterns/database.md#enforcing-the-boundary).
 - **Migrations are SQL in goose, not `AutoMigrate`.** AutoMigrate cannot express
   RLS policies, partial indexes, or partitions, and versions nothing.
 - **Files ~300 lines**: split by concern (`user.go`, `user_validation.go`)
@@ -414,9 +416,22 @@ func main() {
     log.Fatal().Err(err).Msg("config")
   }
 
+  db.SetDriver(cfg.Driver)
+
   database, err := db.Connect(cfg.Driver, cfg.DatabaseURL)
   if err != nil {
     log.Fatal().Err(err).Msg("database")
+  }
+  db.SetDB(database)
+
+  // tenancy: shared on postgres -- the owner handle bypasses RLS and is used
+  // only by migrations, workers and platform tooling.
+  if cfg.DatabaseOwnerURL != "" {
+    owner, err := db.Connect(cfg.Driver, cfg.DatabaseOwnerURL)
+    if err != nil {
+      log.Fatal().Err(err).Msg("owner database")
+    }
+    db.SetOwnerDB(owner)
   }
 
   // Budget connections across ALL processes, not per process.
@@ -427,7 +442,6 @@ func main() {
     sqlDB.SetConnMaxLifetime(30 * time.Minute)
     defer sqlDB.Close()
   }
-  db.SetDB(database)
 
   // Migrations are NOT run here: N instances would race the same upgrade on
   // boot. They run once, at deploy, as app_owner. See patterns/deployment.md.
@@ -502,8 +516,9 @@ list: nothing errors, nothing logs, and the damage is discovered late.
 - Tenant is set with `set_config(..., true)` **inside a transaction**.
   `SET LOCAL` outside a transaction is a no-op with only a warning, and setting
   it on the shared handle applies to an arbitrary connection.
-- No handler holds the shared handle. Everything goes through `WithTenant`;
-  `db.Unscoped()` is the only escape hatch and CI checks where it appears.
+- Tenant-scoped queries go through `WithTenant`. The shared handle fails closed
+  under RLS (zero rows, not a leak), and `db.Unscoped()` — the owner connection
+  — is platform-only, checked in CI.
 - **SQLite has no RLS.** With `database: sqlite` the tenant predicate comes from
   GORM callbacks, which `Raw` and `Exec` bypass. Isolation tests run on
   PostgreSQL regardless of what development uses.
