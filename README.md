@@ -93,15 +93,31 @@ cd .. && git add blueprint && git commit -m "Update blueprint to v1.1.0"
 
 Detailed architecture and coding standards in `patterns/`:
 
+**Core — applies to every project:**
+
 - **[mvc.md](patterns/mvc.md)** - Models (fat), Views (templates), Controllers (thin)
-- **[database.md](patterns/database.md)** - Migrations, JSONB, full-text search, RLS, indexes
-- **[htmx.md](patterns/htmx.md)** - Interactive patterns (inline edit, delete, modals)
-- **[frontend.md](patterns/frontend.md)** - Bootstrap 5 UI, responsive design
-- **[i18n.md](patterns/i18n.md)** - Multi-language support with JSON catalogs
+- **[database.md](patterns/database.md)** - Migrations, JSONB, full-text search, indexes, Row-Level Security
+- **[data-modeling.md](patterns/data-modeling.md)** - Evidence vs derivation, temporal data, graph shapes
 - **[auth.md](patterns/auth.md)** - Magic links, sessions, OAuth
 - **[security.md](patterns/security.md)** - CSRF, rate limiting, input validation
 - **[testing.md](patterns/testing.md)** - Unit, integration, HTTP tests
+- **[observability.md](patterns/observability.md)** - Correlation IDs, structured logs, metrics, alerting
+- **[i18n.md](patterns/i18n.md)** - Multi-language support with JSON catalogs
 - **[deployment.md](patterns/deployment.md)** - Docker, production checklist
+
+**Layers — read only when the project needs them:**
+
+- **[jobs.md](patterns/jobs.md)** - Durable Postgres queue, retries, idempotency, workers
+- **[realtime.md](patterns/realtime.md)** - WebSocket/SSE, fanout, ordering, reconnect-and-resume
+- **[ai.md](patterns/ai.md)** - LLM providers, structured output, provenance, cost control, evals
+- **[frontend.md](patterns/frontend.md)** - Bootstrap 5 UI, responsive design
+- **[htmx.md](patterns/htmx.md)** - Interactive patterns (inline edit, delete, modals)
+- **[embed.md](patterns/embed.md)** - Single-binary asset embedding
+- **[scale.md](patterns/scale.md)** - Cursor pagination, partitioning, pooling, caching
+
+The blueprint is one architecture with optional layers, not a menu. Establish
+the project configuration in [claude.md](claude.md#project-configuration) first,
+then read only the layers whose condition holds.
 
 ---
 
@@ -131,7 +147,7 @@ Detailed architecture and coding standards in `patterns/`:
 - **PostgreSQL 15+** with goose migrations
 - **HTMX 1.9+** for rich interactivity
 - **Bootstrap 5.3+** for responsive UI
-- **sqlx** for clean SQL queries (no ORM)
+- **GORM** over PostgreSQL or SQLite, with SQL migrations in goose
 - **html/template** for secure server-rendered views
 - **zerolog** for structured logging
 
@@ -151,7 +167,7 @@ Detailed architecture and coding standards in `patterns/`:
 - **B2C (default)**: User-owned data with `user_id` foreign keys
 - **B2B (optional)**: Multi-tenant with PostgreSQL Row-Level Security (RLS)
 
-See [patterns/database.md#multi-tenancy](patterns/database.md#multi-tenancy-with-row-level-security) for migration guide.
+See [patterns/database.md#multi-tenancy](patterns/database.md#multi-tenancy) for migration guide.
 
 
 ---

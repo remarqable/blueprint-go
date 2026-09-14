@@ -38,8 +38,7 @@ import (
   "yourapp/internal/platform/i18n"
   "yourapp/internal/platform/logger"
 
-  "github.com/jmoiron/sqlx"
-  _ "github.com/lib/pq"
+  "gorm.io/gorm"
 )
 
 const appVersion = "0.1.0"
@@ -58,25 +57,27 @@ func main() {
   }
 
   // 3. Connect to database
-  ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-  defer cancel()
-
-  database, err := sqlx.ConnectContext(ctx, "postgres", cfg.DatabaseURL)
+  database, err := db.Connect(cfg.Driver, cfg.DatabaseURL)
   if err != nil {
     log.Fatal().Err(err).Msg("failed to connect to database")
   }
-  defer database.Close()
 
   // Set global DB handle
   db.SetDB(database)
 
-  // 4. Configure connection pool
-  database.SetMaxOpenConns(25)
-  database.SetMaxIdleConns(5)
-  database.SetConnMaxLifetime(5 * time.Minute)
+  // 4. Configure connection pool.
+  // Budget across ALL processes, not per process -- see patterns/scale.md.
+  sqlDB, err := database.DB()
+  if err != nil {
+    log.Fatal().Err(err).Msg("failed to reach underlying pool")
+  }
+  defer sqlDB.Close()
+  sqlDB.SetMaxOpenConns(25)
+  sqlDB.SetMaxIdleConns(5)
+  sqlDB.SetConnMaxLifetime(30 * time.Minute)
 
   // 5. Verify database connectivity
-  if err := database.PingContext(ctx); err != nil {
+  if err := sqlDB.PingContext(ctx); err != nil {
     log.Fatal().Err(err).Msg("database ping failed")
   }
   log.Info().Msg("database connection established")
@@ -204,7 +205,7 @@ APP_URL=http://localhost:8000
 
 ### Loading Config
 
-See [Configuration](../../claude.md#configuration) in master blueprint.
+See [Configuration](../claude.md#configuration) in master blueprint.
 
 ---
 
@@ -358,6 +359,11 @@ docker run -p 8080:8080 \
 
 ## Monitoring & Observability
 
+> This section covers the deployment-side wiring only. For correlation IDs,
+> logging conventions, metric selection, cardinality limits, and what is worth
+> alerting on, see [observability.md](observability.md).
+
+
 ### Health Check Endpoint
 
 ```go
@@ -368,7 +374,11 @@ func HealthCheck(c *gin.Context) {
   defer cancel()
 
   dbStatus := "ok"
-  if err := db.Get().PingContext(ctx); err != nil {
+  sqlDB, err := db.Unscoped().DB()
+  if err == nil {
+    err = sqlDB.PingContext(ctx)
+  }
+  if err != nil {
     dbStatus = "error"
     c.JSON(503, gin.H{
       "status": "unhealthy",
@@ -622,4 +632,4 @@ jobs:
 
 ---
 
-**Next:** Back to [claude.md](../../claude.md) for master blueprint
+**Next:** Back to [claude.md](../claude.md) for master blueprint

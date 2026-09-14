@@ -30,7 +30,7 @@ Choose your database based on your needs:
 - [JSONB Usage Patterns](#jsonb-usage-patterns)
 - [Full-text Search](#full-text-search)
 - [Indexes and Performance](#indexes-and-performance)
-- [Multi-Tenancy with Row-Level Security](#multi-tenancy-with-row-level-security)
+- [Multi-Tenancy](#multi-tenancy)
 - [Database Synchronization](#database-synchronization)
 - [Troubleshooting](#troubleshooting)
 
@@ -506,261 +506,422 @@ CREATE INDEX idx_product_name_trgm ON product USING GIN (name gin_trgm_ops);
 
 ---
 
-## Multi-Tenancy with Row-Level Security
+## Multi-Tenancy
 
-### When to Use Multi-Tenancy
+Two mechanisms, chosen by database, behind one API.
 
-**Use for B2B SaaS:**
-- Team collaboration tools
-- Workspace-based applications
-- Organization/company isolation required
-- Shared infrastructure, isolated data
+**PostgreSQL: Row-Level Security.** A policy is merged into the `WHERE` clause
+of every query the planner builds, so isolation holds even when application code
+forgets it. This is the real thing and the reason to run PostgreSQL in
+production.
 
-**Don't use for B2C:**
-- User-owned data is sufficient (`user_id` foreign keys)
-- Simpler, faster to build
-- Most consumer apps don't need tenant isolation
+**SQLite: application-layer scoping.** SQLite has no RLS. A GORM callback adds
+the tenant predicate to every query. It works, and it is strictly weaker —
+raw SQL bypasses it, so it is a development and single-tenant-deployment
+convenience, not a security boundary.
 
-### Architecture Overview
+Both are entered through the same `WithTenant` helper, so application code is
+identical on either database. **Anything holding real multi-tenant data runs on
+PostgreSQL.**
 
-PostgreSQL Row-Level Security (RLS) enforces data isolation **at the database level**, ensuring tenants can only access their own data—even if your application code has bugs.
+### The four silent failures (PostgreSQL)
 
-**4 Steps:**
-1. Add `tenant_id` to tables
-2. Enable RLS on tables
-3. Create RLS policy
-4. Set tenant in session (via middleware)
+It is easy to build something that looks like RLS and enforces nothing. Four
+defaults work against you, and all four fail **silently** — no error, no
+warning, just every tenant seeing every row.
 
-### Step 1: Add tenant_id to Schema
-
-```sql
-CREATE TABLE post (
-  id BIGSERIAL PRIMARY KEY,
-  tenant_id BIGINT NOT NULL,  -- ← Multi-tenancy column
-  user_id BIGINT NOT NULL REFERENCES "user"(id),
-  title TEXT NOT NULL,
-  content TEXT,
-  published BOOLEAN DEFAULT false,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- Index for tenant filtering
-CREATE INDEX idx_post_tenant ON post (tenant_id);
-
--- Composite index for user + tenant queries
-CREATE INDEX idx_post_tenant_user ON post (tenant_id, user_id);
-```
-
-### Step 2: Enable RLS
+**1. Table owners bypass RLS.** This is the big one. `ENABLE ROW LEVEL SECURITY`
+does not apply to the role that owns the table, and in almost every project the
+application connects as the role that ran the migrations — which owns the
+tables. Your policies are live, `pg_policies` lists them, and they are skipped
+on every query.
 
 ```sql
 ALTER TABLE post ENABLE ROW LEVEL SECURITY;
+ALTER TABLE post FORCE  ROW LEVEL SECURITY;   -- applies to the owner too
 ```
 
-### Step 3: Create RLS Policy
+Better: do not connect as the owner at all. See [Roles](#roles).
+
+**2. `USING` does not govern writes.** A `USING` clause filters rows a query can
+*see* — SELECT, UPDATE, DELETE. It says nothing about rows you may *write*. With
+a `USING`-only policy, any tenant can `INSERT` a row carrying another tenant's
+`tenant_id`, and will then be unable to see the row it just created. You need
+`WITH CHECK` for the write direction.
+
+**3. `SET LOCAL` outside a transaction does nothing.** PostgreSQL accepts it,
+emits `WARNING: SET LOCAL can only be used in transaction blocks`, and discards
+it. Most drivers do not surface that warning.
+
+**4. A shared handle is not a connection.** `SET` and `SET LOCAL` both apply to
+one backend session. Issuing either against the global `*gorm.DB` from `db.Get()`
+sets it on whichever pooled connection answered, and the next query will likely
+use a different one. Add pgbouncer in transaction mode and even session-scoped
+settings stop surviving between statements.
+
+Failures 3 and 4 compound: the standard mistake is to set the tenant in HTTP
+middleware against the shared handle, which is both outside a transaction and on
+an arbitrary connection. It is a no-op twice over.
+
+GORM makes failure 4 easier to hit than a raw driver would, because `db.Get()`
+returns a usable handle from anywhere. Treat any tenant-scoped query issued
+outside `WithTenant` as a bug — see [Enforcing the boundary](#enforcing-the-boundary).
+
+### Roles
+
+Do not let the application connect as the table owner.
 
 ```sql
-CREATE POLICY tenant_isolation_policy ON post
-  USING (tenant_id = current_setting('app.tenant_id')::BIGINT);
+-- migrations run as the owner
+CREATE ROLE app_owner LOGIN PASSWORD '...';
+
+-- the application connects as this one
+CREATE ROLE app_user LOGIN PASSWORD '...' NOBYPASSRLS;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO app_user;
+ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;
 ```
 
-**What this does:**
-- Automatically filters ALL queries by `tenant_id = current_setting('app.tenant_id')`
-- Applies to SELECT, UPDATE, DELETE (unless you create separate policies)
-- No need to add `WHERE tenant_id = ?` to every query
+Two DSNs: `DATABASE_OWNER_URL` for migrations and workers, `DATABASE_URL` for
+the application. `NOBYPASSRLS` means that even if `app_user` is later granted
+ownership by accident, policies still apply. Superusers always bypass RLS; never
+run the application as one.
 
-### Step 4: Set Tenant in Middleware
+### Schema
+
+```go
+// internal/models/post.go
+type Post struct {
+  ID        int64     `gorm:"primaryKey"`
+  TenantID  int64     `gorm:"not null;index:idx_post_tenant_created,priority:1"`
+  UserID    int64     `gorm:"not null"`
+  Title     string    `gorm:"not null"`
+  Content   string
+  CreatedAt time.Time `gorm:"index:idx_post_tenant_created,priority:2,sort:desc"`
+  UpdatedAt time.Time
+}
+
+func (Post) TableName() string { return "post" }
+```
+
+```sql
+-- migrations/00X_post.sql
+CREATE TABLE post (
+  id         BIGSERIAL PRIMARY KEY,
+  tenant_id  BIGINT NOT NULL REFERENCES tenant(id),
+  user_id    BIGINT NOT NULL REFERENCES "user"(id),
+  title      TEXT NOT NULL,
+  content    TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- tenant_id leads every composite index: it is in the predicate of every query
+CREATE INDEX idx_post_tenant_created ON post (tenant_id, created_at DESC);
+CREATE INDEX idx_post_tenant_user    ON post (tenant_id, user_id);
+```
+
+Migrations stay in goose, as SQL. GORM's `AutoMigrate` is not used here — it
+cannot express policies, partial indexes, or `FORCE ROW LEVEL SECURITY`, and it
+does not version anything.
+
+### Policy
+
+One policy, both directions, on every tenant-scoped table:
+
+```sql
+ALTER TABLE post ENABLE ROW LEVEL SECURITY;
+ALTER TABLE post FORCE  ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON post
+  USING      (tenant_id = current_setting('app.tenant_id', true)::BIGINT)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::BIGINT);
+```
+
+The second argument to `current_setting` is `missing_ok`. Without it, an unset
+variable raises `unrecognized configuration parameter` and the query errors.
+With it, an unset variable returns NULL, `tenant_id = NULL` is NULL, and the
+policy matches nothing.
+
+**Unset means zero rows, never all rows.** That is the behaviour you want: a
+code path that forgets to set the tenant returns empty results rather than
+leaking. Write a test that asserts it.
+
+### Setting the tenant
+
+The tenant must be set on the same connection, inside the same transaction, as
+the queries it governs. Every tenant-scoped request therefore runs in a
+transaction, and the tenant is set as its first statement.
+
+```go
+// internal/platform/db/tenant.go
+package db
+
+import (
+  "context"
+  "errors"
+
+  "gorm.io/gorm"
+)
+
+var ErrNoTenant = errors.New("no tenant in context")
+
+// WithTenant runs fn inside a transaction scoped to tenantID. It is the ONLY
+// way tenant-scoped queries reach the database. Using db.Get() directly
+// defeats isolation entirely -- see § The four silent failures.
+func WithTenant(ctx context.Context, tenantID int64, fn func(tx *gorm.DB) error) error {
+  if tenantID == 0 {
+    return ErrNoTenant
+  }
+
+  return gdb.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+    if isPostgres {
+      // set_config(name, value, is_local=true) == SET LOCAL, but accepts a
+      // bind parameter. SET LOCAL does not, and interpolating invites
+      // injection.
+      if err := tx.Exec(
+        `SELECT set_config('app.tenant_id', ?::text, true)`, tenantID,
+      ).Error; err != nil {
+        return err
+      }
+    } else {
+      // SQLite: no RLS. The callbacks below read this and add the predicate.
+      tx = tx.Set("app:tenant_id", tenantID)
+    }
+    return fn(tx)
+  })
+}
+```
+
+Middleware resolves the tenant into the request context and **does not touch the
+database**:
 
 ```go
 // internal/middleware/tenant.go
-package middleware
-
-import (
-  "github.com/gin-gonic/gin"
-  "yourapp/internal/platform/auth"
-  "yourapp/internal/platform/db"
-  "yourapp/internal/platform/errors"
-)
-
-// TenantMiddleware sets tenant_id in Gin context and database session
-// IMPORTANT: Call AFTER authentication middleware
 func TenantMiddleware() gin.HandlerFunc {
   return func(c *gin.Context) {
-    // Get session (includes tenant_id)
     session, err := auth.GetSession(getToken(c))
     if err != nil {
       c.AbortWithStatusJSON(401, gin.H{"error": errors.CodeInvalidSession})
       return
     }
-
-    // Set in Gin context (for application logic)
     c.Set("tenant_id", session.TenantID)
     c.Set("user_id", session.UserID)
-    c.Set("user_email", session.Email)
-
-    // Set in database session (for RLS enforcement)
-    // IMPORTANT: Use SET LOCAL (not SET SESSION) so it resets after request
-    ctx := c.Request.Context()
-    err = db.Get().WithContext(ctx).Exec(
-      "SET LOCAL app.tenant_id = ?",
-      session.TenantID).Error
-
-    if err != nil {
-      c.AbortWithStatusJSON(500, gin.H{"error": errors.CodeUnknown})
-      return
-    }
-
     c.Next()
   }
 }
-
-func getToken(c *gin.Context) string {
-  token := c.GetHeader("Authorization")
-  if token == "" {
-    token, _ = c.Cookie("session_token")
-  }
-  return token
-}
 ```
 
-### Usage in Application Code (GORM)
+Controllers open the scope:
 
-**Controllers:**
 ```go
 func ListPosts(c *gin.Context) {
-  ctx := c.Request.Context()
-
   var posts []models.Post
 
-  // RLS automatically filters by tenant_id in database
-  // No need for WHERE tenant_id = ? in query!
-  err := db.Get().WithContext(ctx).
-    Order("created_at DESC").
-    Find(&posts).Error
-
+  err := db.WithTenant(c.Request.Context(), c.GetInt64("tenant_id"),
+    func(tx *gorm.DB) error {
+      // No Where("tenant_id = ?") -- the policy supplies it.
+      return tx.Order("created_at DESC").Limit(50).Find(&posts).Error
+    })
   if err != nil {
     handleError(c, err)
     return
   }
-
   c.HTML(200, "posts/list.html", gin.H{"posts": posts})
 }
 ```
 
-**Models:**
+### SQLite scoping
+
+On SQLite the predicate comes from GORM callbacks rather than the database.
+Register once at startup:
+
 ```go
-// Post model with tenant_id
-type Post struct {
-  ID        int64     `gorm:"primaryKey" json:"id"`
-  TenantID  int64     `gorm:"index" json:"tenant_id"`
-  UserID    int64     `gorm:"index" json:"user_id"`
-  Title     string    `json:"title"`
-  Content   string    `json:"content"`
-  Published bool      `gorm:"default:false" json:"published"`
-  CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
-  UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
-}
+// internal/platform/db/sqlite_tenant.go
+func registerTenantCallbacks(g *gorm.DB) error {
+  scope := func(tx *gorm.DB) {
+    if tx.Statement.Table == "" || !isTenantScoped(tx.Statement.Table) {
+      return
+    }
+    v, ok := tx.Get("app:tenant_id")
+    if !ok {
+      // Fail closed, exactly like an unset RLS variable.
+      tx.AddError(ErrNoTenant)
+      return
+    }
+    tx.Statement.AddClause(clause.Where{Exprs: []clause.Expression{
+      clause.Eq{Column: clause.Column{Table: tx.Statement.Table, Name: "tenant_id"},
+                Value: v},
+    }})
+  }
 
-// Create: explicitly pass tenant_id
-func (p *Post) Create(ctx context.Context, tenantID, userID int64) error {
-  p.TenantID = tenantID
-  p.UserID = userID
-  return db.Get().WithContext(ctx).Create(p).Error
-}
-
-// List: RLS filters automatically (PostgreSQL) or use scope (SQLite)
-func GetPostsByUser(ctx context.Context, userID int64) ([]Post, error) {
-  var posts []Post
-  err := db.Get().WithContext(ctx).
-    Where("user_id = ?", userID).
-    Order("created_at DESC").
-    Find(&posts).Error
-  return posts, err
+  if err := g.Callback().Query().Before("gorm:query").
+    Register("tenant:query", scope); err != nil {
+    return err
+  }
+  if err := g.Callback().Update().Before("gorm:update").
+    Register("tenant:update", scope); err != nil {
+    return err
+  }
+  if err := g.Callback().Delete().Before("gorm:delete").
+    Register("tenant:delete", scope); err != nil {
+    return err
+  }
+  // Create sets rather than filters.
+  return g.Callback().Create().Before("gorm:create").
+    Register("tenant:create", setTenantOnCreate)
 }
 ```
 
-> **Note:** RLS is PostgreSQL-only. For SQLite, use GORM scopes to filter by tenant_id.
+Its limits, stated plainly:
 
-### Benefits of RLS
+- **`Raw` and `Exec` bypass it.** Callbacks run on GORM's query builder, not on
+  SQL you wrote yourself. Every raw statement against a tenant-scoped table must
+  carry its own predicate.
+- **It is in-process.** A bug, a migration script, or anything reaching the file
+  directly sees everything.
+- **`isTenantScoped` is a list you maintain.** A new table that nobody adds to it
+  is unscoped, silently. Generate the list from the models that embed a tenant
+  field rather than hand-maintaining it.
 
-**Enhanced Security:**
-- ✅ Data isolation enforced at database level
-- ✅ Even if app code has bugs, tenants can't see each other's data
-- ✅ SQL injection can't bypass tenant boundaries
-- ✅ Defense in depth: app layer + database layer
+This is why the recommendation is unambiguous: SQLite for development and
+single-tenant installs, PostgreSQL wherever more than one tenant's data shares a
+file.
 
-**Simplified Code:**
-- ✅ No need to add `WHERE tenant_id = ?` to every query
-- ✅ Cleaner, more maintainable code
-- ✅ Less chance of forgetting tenant filter
+### Enforcing the boundary
 
-**Centralized Control:**
-- ✅ Policies defined once in database
-- ✅ Applied consistently across all queries
-- ✅ Easy to audit and update
-
-### Migration from B2C to B2B
-
-If you start with user-owned data (B2C) and need to add multi-tenancy later:
-
-```sql
--- 1. Add tenant_id column
-ALTER TABLE post ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1;
-
--- 2. Create index
-CREATE INDEX idx_post_tenant ON post (tenant_id);
-
--- 3. Enable RLS
-ALTER TABLE post ENABLE ROW LEVEL SECURITY;
-
--- 4. Create policy
-CREATE POLICY tenant_isolation_policy ON post
-  USING (tenant_id = current_setting('app.tenant_id')::BIGINT);
-
--- 5. Update application code to set tenant_id in session
-```
-
-### Testing Multi-Tenancy (GORM)
+`db.Get()` returning a usable global handle is convenient and is the main way
+isolation gets lost. Two mechanical guards:
 
 ```go
-func TestPost_Create_MultiTenant(t *testing.T) {
-  db.SetupTestData(t)
+// Make the unscoped handle explicit and greppable.
+func Get() *gorm.DB {
+  panic("db.Get() is not tenant-scoped; use db.WithTenant or db.Unscoped()")
+}
 
-  db.TestTx(t, func(t *testing.T, tx *gorm.DB) {
-    // Set tenant context (PostgreSQL RLS)
-    tx.Exec("SET LOCAL app.tenant_id = 1")
+// Unscoped is for migrations, workers claiming jobs, and platform admin.
+// Every call site is a deliberate decision.
+func Unscoped() *gorm.DB { return gdb }
+```
 
-    post := Post{Title: "Test post", Content: "Hello world"}
-    err := post.Create(context.Background(), 1, 1)
-    require.NoError(t, err)
+Then a CI check that `db.Unscoped()` appears only where it should:
 
-    // Verify isolation: different tenant can't see post
-    tx.Exec("SET LOCAL app.tenant_id = 2")
+```bash
+! grep -rn "db.Unscoped()" internal/controllers internal/models \
+  || { echo "tenant scope escaped in controllers/models"; exit 1; }
+```
 
-    var count int64
-    tx.Model(&Post{}).Count(&count)
-    assert.Equal(t, int64(0), count)  // Tenant 2 sees no posts
+### Outside the request cycle
+
+Workers, cron jobs, migrations, and admin tooling have no session to read a
+tenant from. Two rules:
+
+- Work that belongs to a tenant carries `tenant_id` on the job row and calls
+  `WithTenant` with it. A job is scoped exactly like a request.
+- Work that legitimately spans tenants (billing reconciliation, platform admin,
+  schema migration) connects as `app_owner`, which bypasses RLS by design. Keep
+  those paths few, name them explicitly, and never reach for that connection
+  from request-handling code.
+
+See [jobs.md](jobs.md#tenant-scoping-in-workers).
+
+### Testing it
+
+The obvious test passes on a broken configuration. If the test sets the tenant
+inside a transaction but production sets it on the shared handle, the test
+proves nothing about production. **Test through the same helper the application
+uses.**
+
+```go
+func TestTenantIsolation(t *testing.T) {
+  ctx := context.Background()
+
+  // Tenant 1 writes.
+  require.NoError(t, db.WithTenant(ctx, 1, func(tx *gorm.DB) error {
+    return tx.Create(&models.Post{TenantID: 1, UserID: 1, Title: "tenant one"}).Error
+  }))
+
+  // Tenant 2 cannot see it.
+  var count int64
+  require.NoError(t, db.WithTenant(ctx, 2, func(tx *gorm.DB) error {
+    return tx.Model(&models.Post{}).Count(&count).Error
+  }))
+  assert.Zero(t, count, "tenant 2 must not see tenant 1 rows")
+
+  // Tenant 2 cannot write into tenant 1 either -- this is the WITH CHECK half,
+  // and it fails on a USING-only policy.
+  err := db.WithTenant(ctx, 2, func(tx *gorm.DB) error {
+    return tx.Create(&models.Post{TenantID: 1, UserID: 1, Title: "forged"}).Error
   })
+  assert.Error(t, err, "cross-tenant INSERT must be rejected by WITH CHECK")
+
+  // No tenant set means no rows, not all rows.
+  assert.ErrorIs(t, db.WithTenant(ctx, 0, func(tx *gorm.DB) error { return nil }),
+    db.ErrNoTenant)
 }
 ```
 
-### Implementation Checklist
+Run this suite as `app_user`, not as the owner. **A CI job that connects as the
+owner will pass every isolation test on a completely unprotected database.**
 
-**For each table:**
-- [ ] Add `tenant_id BIGINT NOT NULL` column
-- [ ] Add index: `CREATE INDEX idx_<table>_tenant ON <table> (tenant_id)`
-- [ ] Enable RLS: `ALTER TABLE <table> ENABLE ROW LEVEL SECURITY`
-- [ ] Create policy: `CREATE POLICY tenant_isolation_policy ON <table> USING (...)`
+Run it on PostgreSQL even if development uses SQLite. The two mechanisms fail
+differently, and only one of them is the one you ship.
 
-**For application:**
-- [ ] Implement `TenantMiddleware()` (see above)
-- [ ] Apply middleware AFTER authentication
-- [ ] Use `SET LOCAL` (not `SET SESSION`)
-- [ ] Extract `tenant_id` from Gin context in controllers
-- [ ] Pass `tenant_id` to model Create/Update methods
+### Performance
 
----
+RLS predicates are planned as ordinary quals, so they are as fast as the index
+behind them — and as slow as its absence.
+
+- `tenant_id` is the **leading column** of every composite index on a
+  tenant-scoped table. A policy on `tenant_id` plus an index on `(created_at)`
+  gives you a filter after the scan, not a seek.
+- The policy expression is evaluated per row unless PostgreSQL can prove it
+  constant. `current_setting(...)::BIGINT` is `STABLE`, so it is evaluated once
+  per statement. Do not wrap it in a `VOLATILE` function, and do not put a
+  subquery in a policy — `tenant_id IN (SELECT ...)` turns every query into a
+  join.
+
+### Choosing an isolation strategy
+
+RLS is the right default on PostgreSQL. The alternatives are worth knowing so
+you can rule them out deliberately.
+
+| Strategy | Isolation | Cross-tenant queries | Migration cost | Practical ceiling |
+|---|---|---|---|---|
+| `tenant_id` + app filtering | Weakest — one forgotten predicate leaks | Trivial | One migration | Any |
+| `tenant_id` + RLS | Strong — enforced in the planner | Needs an owner connection | One migration | Any |
+| Schema per tenant | Strong | Painful (`UNION` across schemas) | N migrations per release | Low hundreds |
+| Database per tenant | Strongest | Effectively impossible | N migrations, N connections | Dozens |
+
+Schema-per-tenant is the one people reach for and regret. Every release runs
+migrations N times, the catalog grows until planning slows down, connection
+pooling degrades because `search_path` is session state, and any product
+question that spans tenants becomes a batch job. Choose it only when a contract
+or regulator demands physical separation, and then consider database-per-tenant
+instead — same cost, better isolation.
+
+### Checklist
+
+Per table:
+- [ ] `tenant_id BIGINT NOT NULL REFERENCES tenant(id)`
+- [ ] `tenant_id` leads every composite index
+- [ ] `ENABLE ROW LEVEL SECURITY`
+- [ ] `FORCE ROW LEVEL SECURITY`
+- [ ] Policy has both `USING` and `WITH CHECK`
+- [ ] `current_setting('app.tenant_id', true)` — with `missing_ok`
+- [ ] Listed in `isTenantScoped` if SQLite is supported
+
+Per application:
+- [ ] Runtime connects as a `NOBYPASSRLS` non-owner role
+- [ ] Migrations connect as the owner, on a separate DSN
+- [ ] Every tenant-scoped query goes through `WithTenant`
+- [ ] `db.Unscoped()` appears only in platform code, checked in CI
+- [ ] Jobs carry `tenant_id` and re-enter `WithTenant`
+- [ ] Raw `Exec`/`Raw` against tenant tables carry their own predicate
+- [ ] Isolation tests run on PostgreSQL, as the runtime role
+- [ ] A test asserts unset tenant yields zero rows
+- [ ] A test asserts cross-tenant `INSERT` is rejected
 
 ## Database Synchronization
 
@@ -911,21 +1072,46 @@ ANALYZE post;
 REINDEX INDEX idx_post_user_id;
 ```
 
-**RLS not working:**
-```bash
-# Check if RLS is enabled
-\d+ post  # Should show "Policies" section
+**RLS not working (every tenant sees every row):**
 
-# Verify policy
-SELECT * FROM pg_policies WHERE tablename = 'post';
+Work down this list. The first two causes account for nearly all of it.
 
-# Check session variable
-SHOW app.tenant_id;  -- Should return current tenant
+```sql
+-- 1. Are you the table owner? Owners bypass RLS unless FORCE is set.
+SELECT tableowner FROM pg_tables WHERE tablename = 'post';
+SELECT current_user, rolsuper, rolbypassrls
+  FROM pg_roles WHERE rolname = current_user;
+-- If current_user owns the table, or rolbypassrls/rolsuper is true,
+-- policies are skipped. Fix: ALTER TABLE post FORCE ROW LEVEL SECURITY,
+-- and connect as a NOBYPASSRLS non-owner role.
 
-# Test manually
-SET LOCAL app.tenant_id = 1;
-SELECT * FROM post;  -- Should only show tenant 1 data
+-- 2. Is the tenant actually set on THIS connection, in THIS transaction?
+SELECT current_setting('app.tenant_id', true);
+-- NULL means it was never set, was set on a different pooled connection,
+-- or was issued as SET LOCAL outside a transaction (a silent no-op).
+
+-- 3. Is RLS enabled and forced?
+SELECT relrowsecurity, relforcerowsecurity
+  FROM pg_class WHERE relname = 'post';   -- want t, t
+
+-- 4. Does the policy cover writes as well as reads?
+SELECT polname, polcmd, pg_get_expr(polqual, polrelid)      AS using_expr,
+                        pg_get_expr(polwithcheck, polrelid) AS check_expr
+  FROM pg_policy WHERE polrelid = 'post'::regclass;
+-- check_expr NULL means cross-tenant INSERT is permitted.
+
+-- 5. See what the planner actually applied.
+EXPLAIN (ANALYZE, VERBOSE) SELECT * FROM post;
+-- The policy should appear as a Filter. If it does not, RLS is being bypassed.
 ```
+
+**Isolation tests pass but production leaks.** The test sets the tenant inside a
+transaction; production sets it on the shared `db.Get()` handle. Both look like
+they set the tenant. Only one of them does. Test through the same `WithTenant`
+helper the application uses, and run CI as the runtime role — not as the owner.
+
+**Running on SQLite.** There is no RLS. Scoping comes from GORM callbacks, which
+`Raw` and `Exec` bypass entirely. Verify isolation on PostgreSQL.
 
 ---
 
