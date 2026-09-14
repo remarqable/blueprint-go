@@ -386,15 +386,15 @@ GORM's builder parameterises automatically. The risk is in the places that take
 raw strings.
 
 ```go
-// ✅ Safe -- builder, values are bound
+// Safe -- builder, values are bound
 db.Get().WithContext(ctx).
   Where("id = ? AND email = ?", userID, email).First(&user)
 
-// ✅ Safe -- Raw/Exec with placeholders
+// Safe -- Raw/Exec with placeholders
 db.Get().WithContext(ctx).
   Raw(`SELECT * FROM "user" WHERE email = ?`, email).Scan(&user)
 
-// ❌ NEVER -- string interpolation into any of them
+// NEVER -- string interpolation into any of them
 q := fmt.Sprintf(`SELECT * FROM "user" WHERE email = '%s'`, email)
 db.Get().WithContext(ctx).Raw(q).Scan(&user)
 ```
@@ -407,10 +407,10 @@ point, and it is the one that survives code review because it does not look like
 SQL.
 
 ```go
-// ❌ Vulnerable -- c.Query returns whatever the client sent
+// Vulnerable -- c.Query returns whatever the client sent
 db.Get().Order(c.Query("sort")).Find(&users)
 
-// ✅ Safe -- allowlist, never the raw input
+// Safe -- allowlist, never the raw input
 var allowed = map[string]string{
   "newest": "created_at DESC",
   "oldest": "created_at ASC",
@@ -429,7 +429,7 @@ The same applies to `Table()`, `Select()` with computed column lists, and
 ### Dynamic Queries (Use Whitelists)
 
 ```go
-// ✅ Safe (whitelist approach)
+// Safe (whitelist approach)
 func ListUsers(ctx context.Context, sortBy string) ([]User, error) {
   // Whitelist allowed sort fields
   allowedSorts := map[string]bool{
@@ -803,30 +803,30 @@ logSecurityEvent("csrf_token_invalid", userID, ip, "POST /tasks/create")
 
 ## Best Practices Summary
 
-### Do's ✅
+### Do's
 
-- ✅ **Use CSRF protection** on all state-changing requests
-- ✅ **Rate limit** auth endpoints and public APIs
-- ✅ **Validate all inputs** (length, format, type)
-- ✅ **Use parameterized queries** (prevent SQL injection)
-- ✅ **Auto-escape templates** (prevent XSS)
-- ✅ **Secure cookies** (HttpOnly, Secure, SameSite)
-- ✅ **Force HTTPS** in production
-- ✅ **Add security headers** (X-Frame-Options, CSP, etc.)
-- ✅ **Log security events** (failed logins, rate limits)
-- ✅ **Never commit secrets** (use env vars or secrets manager)
-- ✅ **Keep dependencies updated** (go mod, Dependabot)
+- **Use CSRF protection** on all state-changing requests
+- **Rate limit** auth endpoints and public APIs
+- **Validate all inputs** (length, format, type)
+- **Use parameterized queries** (prevent SQL injection)
+- **Auto-escape templates** (prevent XSS)
+- **Secure cookies** (HttpOnly, Secure, SameSite)
+- **Force HTTPS** in production
+- **Add security headers** (X-Frame-Options, CSP, etc.)
+- **Log security events** (failed logins, rate limits)
+- **Never commit secrets** (use env vars or secrets manager)
+- **Keep dependencies updated** (go mod, Dependabot)
 
-### Don'ts ❌
+### Don'ts
 
-- ❌ **Don't trust user input** (always validate)
-- ❌ **Don't use string concatenation** for SQL queries
-- ❌ **Don't disable auto-escaping** in templates (unless trusted content)
-- ❌ **Don't log sensitive data** (passwords, tokens, PII)
-- ❌ **Don't expose stack traces** to users
-- ❌ **Don't use weak session tokens** (use crypto/rand, not math/rand)
-- ❌ **Don't store passwords in plaintext** (use bcrypt, argon2)
-- ❌ **Don't ignore security advisories** (GitHub, Go security team)
+- **Don't trust user input** (always validate)
+- **Don't use string concatenation** for SQL queries
+- **Don't disable auto-escaping** in templates (unless trusted content)
+- **Don't log sensitive data** (passwords, tokens, PII)
+- **Don't expose stack traces** to users
+- **Don't use weak session tokens** (use crypto/rand, not math/rand)
+- **Don't store passwords in plaintext** (use bcrypt, argon2)
+- **Don't ignore security advisories** (GitHub, Go security team)
 
 ---
 

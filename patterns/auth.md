@@ -33,10 +33,10 @@
 
 ### Why Magic Links?
 
-- ✅ No password management (no bcrypt, no resets)
-- ✅ Better UX (one-click login)
-- ✅ More secure (no weak passwords)
-- ✅ Fast to implement (perfect for MVP)
+- No password management (no bcrypt, no resets)
+- Better UX (one-click login)
+- More secure (no weak passwords)
+- Fast to implement (perfect for MVP)
 
 ### Database Schema
 
@@ -667,25 +667,25 @@ func GoogleCallback(c *gin.Context) {
 
 ## Best Practices
 
-### Do's ✅
+### Do's
 
-- ✅ **Use magic links for MVP** (simplest, most secure)
-- ✅ **HttpOnly cookies** (prevent XSS)
-- ✅ **SameSite=Lax** (CSRF protection)
-- ✅ **Secure flag in production** (HTTPS only)
-- ✅ **Regenerate session after login** (prevent fixation)
-- ✅ **Cleanup expired sessions** (prevent memory leaks)
-- ✅ **Rate limit auth endpoints** (prevent brute force)
-- ✅ **Log security events** (failed logins, etc.)
+- **Use magic links for MVP** (simplest, most secure)
+- **HttpOnly cookies** (prevent XSS)
+- **SameSite=Lax** (CSRF protection)
+- **Secure flag in production** (HTTPS only)
+- **Regenerate session after login** (prevent fixation)
+- **Cleanup expired sessions** (prevent memory leaks)
+- **Rate limit auth endpoints** (prevent brute force)
+- **Log security events** (failed logins, etc.)
 
-### Don'ts ❌
+### Don'ts
 
-- ❌ **Don't store passwords in plain text** (if using passwords, use bcrypt)
-- ❌ **Don't use math/rand for tokens** (use crypto/rand)
-- ❌ **Don't set session_token in localStorage** (use HttpOnly cookies)
-- ❌ **Don't skip HTTPS in production** (cookies must be Secure)
-- ❌ **Don't use long-lived sessions** (24 hours max, refresh if needed)
-- ❌ **Don't forget to cleanup** (expired magic links, sessions)
+- **Don't store passwords in plain text** (if using passwords, use bcrypt)
+- **Don't use math/rand for tokens** (use crypto/rand)
+- **Don't set session_token in localStorage** (use HttpOnly cookies)
+- **Don't skip HTTPS in production** (cookies must be Secure)
+- **Don't use long-lived sessions** (24 hours max, refresh if needed)
+- **Don't forget to cleanup** (expired magic links, sessions)
 
 ---
 

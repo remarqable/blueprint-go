@@ -488,11 +488,11 @@ func main() {
 
 ### Why Graceful Shutdown?
 
-- ✅ Finish in-flight requests (don't drop connections)
-- ✅ Close database connections cleanly
-- ✅ Flush logs and metrics
-- ✅ Clean up resources (files, connections, etc.)
-- ✅ Signal to orchestrator that shutdown is complete
+- Finish in-flight requests (don't drop connections)
+- Close database connections cleanly
+- Flush logs and metrics
+- Clean up resources (files, connections, etc.)
+- Signal to orchestrator that shutdown is complete
 
 ---
 

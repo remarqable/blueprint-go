@@ -115,7 +115,7 @@ go install github.com/pressly/goose/v3/cmd/goose@latest
 The application must **not** connect as the role that owns the tables. Table
 owners bypass Row-Level Security, so an app connecting as the owner has no
 tenant isolation at all, silently. See
-[database.md § Multi-Tenancy](patterns/database.md#multi-tenancy).
+[tenancy.md](patterns/tenancy.md).
 
 ```bash
 docker run --name app-db -e POSTGRES_USER=app_owner -e POSTGRES_PASSWORD=app \
@@ -155,7 +155,7 @@ EOF
 |------|--------|
 | `internal/platform/config/config.go` | [§ Configuration](#configuration) |
 | `internal/platform/db/db.go` | [database.md](patterns/database.md#connection-management) |
-| `internal/platform/db/tenant.go` | [database.md](patterns/database.md#setting-the-tenant) — `tenancy: shared` |
+| `internal/platform/db/tenant.go` | [tenancy.md](patterns/tenancy.md#setting-the-tenant) — `tenancy: shared` |
 | `internal/platform/logger/logger.go` | [§ Logging](#logging) |
 | `internal/platform/errors/errors.go` | [§ Error Handling](#error-handling) |
 | `internal/platform/obs/ctx.go` | [observability.md](patterns/observability.md#correlation) |
@@ -266,7 +266,7 @@ measurements say so. See [scale.md § What Not to Do Yet](patterns/scale.md#what
   `db.Get()` handle. Under RLS the shared handle fails closed and returns zero
   rows, so the symptom is an empty list rather than a leak — still a bug.
   `db.Unscoped()` is the owner connection and is platform-only.
-  See [database.md](patterns/database.md#enforcing-the-boundary).
+  See [tenancy.md](patterns/tenancy.md#enforcing-the-boundary).
 - **Migrations are SQL in goose, not `AutoMigrate`.** AutoMigrate cannot express
   RLS policies, partial indexes, or partitions, and versions nothing.
 - **Files ~300 lines**: split by concern (`user.go`, `user_validation.go`)
@@ -478,7 +478,7 @@ func main() {
 | Doc | Covers |
 |-----|--------|
 | [mvc.md](patterns/mvc.md) | Models, views, controllers in detail |
-| [database.md](patterns/database.md) | Conventions, migrations, JSONB, FTS, indexes, **RLS** |
+| [database.md](patterns/database.md) | Conventions, migrations, JSONB, FTS, indexes |
 | [data-modeling.md](patterns/data-modeling.md) | Evidence vs derivation, temporal data, graph shapes |
 | [auth.md](patterns/auth.md) | Magic links, OAuth, sessions |
 | [security.md](patterns/security.md) | CSRF, rate limiting, checklist |
@@ -491,6 +491,7 @@ func main() {
 
 | Doc | Condition | Covers |
 |-----|-----------|--------|
+| [tenancy.md](patterns/tenancy.md) | `tenancy: shared` | Row-Level Security, roles, scoping, isolation tests |
 | [jobs.md](patterns/jobs.md) | `jobs: true` | Durable queue, retries, idempotency, workers |
 | [realtime.md](patterns/realtime.md) | `realtime: true` | Connections, fanout, ordering, resume |
 | [ai.md](patterns/ai.md) | `ai: true` | Providers, structured output, provenance, cost, evals |
@@ -583,11 +584,16 @@ way to do something the blueprint already covers.
 
 **Before committing**
 ```bash
+gofmt -l .
+go vet ./...
 go build ./...
 go test ./... -race -cover
-go vet ./...
-gofmt -l .
 ```
+
+**Verifying the blueprint itself.** `examples/` is a compiling skeleton of the
+platform code in these documents, with tests asserting what they claim —
+tenant isolation in four directions, job durability, evidence validation. CI
+builds it. If a pattern here stops compiling, that build fails.
 
 ---
 

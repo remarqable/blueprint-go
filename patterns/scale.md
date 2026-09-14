@@ -183,7 +183,7 @@ When the total exceeds ~200, add pgbouncer in **transaction** mode.
 **This interacts with RLS, and getting it wrong leaks data across tenants.** In
 transaction mode a connection is returned to the pool at the end of every
 transaction, so session-scoped state does not survive. The
-[`WithTenant`](database.md#setting-the-tenant) helper is already correct for
+[`WithTenant`](tenancy.md#setting-the-tenant) helper is already correct for
 this — it sets the tenant with `set_config(..., true)` inside the transaction
 that uses it. Any code path that sets a session variable outside a transaction
 is silently broken under pgbouncer.

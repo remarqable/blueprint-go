@@ -949,7 +949,7 @@ POST /profile
 
 ### Models
 
-✅ **Do:**
+**Do:**
 - Keep all business logic in models
 - Use pointer receivers for methods
 - Return specific errors (use custom error types)
@@ -957,7 +957,7 @@ POST /profile
 - Validate data before database operations
 - Use transactions for multi-step operations
 
-❌ **Don't:**
+**Don't:**
 - Don't put HTTP logic in models (no `gin.Context`)
 - Don't access global state (except `db.Get()`, and never `db.Unscoped()`)
 - Don't log in models (return errors instead)
@@ -965,7 +965,7 @@ POST /profile
 
 ### Controllers
 
-✅ **Do:**
+**Do:**
 - Keep controllers thin (just HTTP orchestration)
 - Extract user ID, language from context
 - Use HTTP status code constants (`http.StatusOK`)
@@ -973,7 +973,7 @@ POST /profile
 - Return consistent error responses
 - Log errors before returning to user
 
-❌ **Don't:**
+**Don't:**
 - Don't put business logic in controllers
 - Don't write raw SQL in controllers
 - Don't return internal error details to users
@@ -981,14 +981,14 @@ POST /profile
 
 ### Views
 
-✅ **Do:**
+**Do:**
 - Use partials for reusable components (prefix with `_`)
 - Use HTMX attributes for interactivity
 - Use Bootstrap classes (no custom CSS)
 - Use i18n for all user-visible text
 - Escape user input (html/template does this automatically)
 
-❌ **Don't:**
+**Don't:**
 - Don't put complex logic in templates
 - Don't use inline styles
 - Don't hardcode text (use i18n keys)

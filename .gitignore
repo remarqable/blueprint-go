@@ -44,3 +44,7 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# example module build output
+examples/bin/
+examples/data/

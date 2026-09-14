@@ -303,12 +303,12 @@ build-check:
 The `//go:embed` directive must be in a file that's in a parent directory of the embedded files:
 
 ```go
-// ✅ Correct: assets.go is parent of views/
+// Correct: assets.go is parent of views/
 // internal/assets/assets.go
 //go:embed all:views
 var viewsFS embed.FS
 
-// ❌ Wrong: can't embed files outside current directory tree
+// Wrong: can't embed files outside current directory tree
 // internal/controllers/router.go
 //go:embed ../../../views  // This won't work!
 ```

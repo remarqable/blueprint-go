@@ -1,0 +1,29 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check internal links and anchors
+        run: ./scripts/check-links.py
+
+  examples:
+    # The patterns in patterns/*.md are extracted from this module. If it stops
+    # compiling, the documentation is wrong.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: examples/go.sum
+      - run: gofmt -l . | tee /tmp/fmt && [ ! -s /tmp/fmt ]
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./... -race -count=1

@@ -33,11 +33,11 @@
 
 ### Why HTMX
 
-- ✅ No build step (just include htmx.min.js)
-- ✅ No JavaScript framework complexity
-- ✅ Server-rendered templates (security, SEO)
-- ✅ Works with any backend (Go, Python, Ruby, etc.)
-- ✅ Small payload (~14 KB gzipped)
+- No build step (just include htmx.min.js)
+- No JavaScript framework complexity
+- Server-rendered templates (security, SEO)
+- Works with any backend (Go, Python, Ruby, etc.)
+- Small payload (~14 KB gzipped)
 
 ---
 
@@ -802,42 +802,42 @@ func Search(c *gin.Context) {
 
 ## Best Practices
 
-### Do's ✅
+### Do's
 
-- ✅ **Use partials** for reusable components (`_setting_row.html`)
-- ✅ **Detect HTMX requests** and respond with partials
-- ✅ **Return full pages** for non-HTMX clients (progressive enhancement)
-- ✅ **Use semantic HTML** (buttons, forms, anchors)
-- ✅ **Add loading indicators** (`htmx-indicator` class)
-- ✅ **Debounce search** (`delay:300ms`)
-- ✅ **Confirm destructive actions** (`hx-confirm`)
-- ✅ **Use HX-Trigger** for client-side events (toasts, etc.)
-- ✅ **Test without JavaScript** (forms should still work)
+- **Use partials** for reusable components (`_setting_row.html`)
+- **Detect HTMX requests** and respond with partials
+- **Return full pages** for non-HTMX clients (progressive enhancement)
+- **Use semantic HTML** (buttons, forms, anchors)
+- **Add loading indicators** (`htmx-indicator` class)
+- **Debounce search** (`delay:300ms`)
+- **Confirm destructive actions** (`hx-confirm`)
+- **Use HX-Trigger** for client-side events (toasts, etc.)
+- **Test without JavaScript** (forms should still work)
 
-### Don'ts ❌
+### Don'ts
 
-- ❌ **Don't return JSON** from HTMX endpoints (return HTML)
-- ❌ **Don't write custom JavaScript** unless absolutely necessary
-- ❌ **Don't nest HTMX attributes** deeply (keep it simple)
-- ❌ **Don't over-optimize** (HTMX is fast, full page reloads are fine for some actions)
-- ❌ **Don't ignore errors** (always handle and show user feedback)
-- ❌ **Don't break browser history** (use `hx-push-url` when appropriate)
+- **Don't return JSON** from HTMX endpoints (return HTML)
+- **Don't write custom JavaScript** unless absolutely necessary
+- **Don't nest HTMX attributes** deeply (keep it simple)
+- **Don't over-optimize** (HTMX is fast, full page reloads are fine for some actions)
+- **Don't ignore errors** (always handle and show user feedback)
+- **Don't break browser history** (use `hx-push-url` when appropriate)
 
 ### Performance Tips
 
-- ✅ Use `hx-swap="outerHTML swap:1s"` for smooth transitions
-- ✅ Debounce search and autocomplete (`delay:300ms`)
-- ✅ Use `hx-trigger="revealed"` for infinite scroll (load on scroll)
-- ✅ Return minimal HTML (partials, not full pages)
-- ✅ Cache static assets (htmx.min.js)
+- Use `hx-swap="outerHTML swap:1s"` for smooth transitions
+- Debounce search and autocomplete (`delay:300ms`)
+- Use `hx-trigger="revealed"` for infinite scroll (load on scroll)
+- Return minimal HTML (partials, not full pages)
+- Cache static assets (htmx.min.js)
 
 ### Accessibility
 
-- ✅ Use semantic HTML (`<button>`, `<form>`, `<a>`)
-- ✅ Add ARIA labels where needed
-- ✅ Ensure keyboard navigation works
-- ✅ Announce dynamic content changes (ARIA live regions)
-- ✅ Test with screen readers
+- Use semantic HTML (`<button>`, `<form>`, `<a>`)
+- Add ARIA labels where needed
+- Ensure keyboard navigation works
+- Announce dynamic content changes (ARIA live regions)
+- Test with screen readers
 
 ---
 

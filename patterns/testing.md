@@ -870,33 +870,32 @@ export DATABASE_OWNER_URL="postgres://app_owner:app@localhost:5432/app?sslmode=d
 ### Install Hook
 
 ```makefile
-# Install git pre-commit hook for running tests
 setup-hooks:
-	@echo '#!/bin/bash\nset -e\necho "🧪 Running tests..."\nexport DATABASE_URL="postgres://app:app@localhost:5432/app?sslmode=disable"\ngo test ./... -timeout 30s\necho "✅ Tests passed"' > .git/hooks/pre-commit
+	@cp scripts/pre-commit .git/hooks/pre-commit
 	@chmod +x .git/hooks/pre-commit
-	@echo "✅ Pre-commit hook installed"
+	@echo "pre-commit hook installed"
 ```
 
 ### Pre-commit Script
 
 ```bash
 #!/bin/bash
-# .git/hooks/pre-commit
+# scripts/pre-commit
 set -e
 
-echo "🧪 Running tests before commit..."
+# Same roles the app uses: the runtime role must not own the tables, or
+# row-level security is bypassed and the isolation tests prove nothing.
+export DATABASE_URL="postgres://app_user:app@localhost:5432/app?sslmode=disable"
+export DATABASE_OWNER_URL="postgres://app_owner:app@localhost:5432/app?sslmode=disable"
 
-# Use existing local DB (transaction rollback, no spin-up needed)
-export DATABASE_URL="postgres://app:app@localhost:5432/app?sslmode=disable"
-
-# Run tests (fast because transaction rollback)
-go test ./... -timeout 30s
-
-# Run linter (optional)
-# staticcheck ./...
-
-echo "✅ Tests passed - committing changes"
+gofmt -l . | grep . && { echo "unformatted files above"; exit 1; }
+go vet ./...
+go test ./... -timeout 60s
 ```
+
+Keep it under a few seconds or people will start passing `--no-verify`, at
+which point the hook is worse than not having one. Anything slower belongs in
+CI.
 
 ---
 
@@ -977,25 +976,25 @@ jobs:
 
 ## Best Practices
 
-### Do's ✅
+### Do's
 
-- ✅ **Use transaction rollback** for fast, isolated tests
-- ✅ **Keep demo_data.sql in sync** with schema
-- ✅ **Load demo data once** (before test suite, not per test)
-- ✅ **Test business logic** (validation, calculations)
-- ✅ **Test database operations** (CRUD, queries)
-- ✅ **Test HTTP handlers** (request/response, routing)
-- ✅ **Use table-driven tests** for comprehensive coverage
-- ✅ **Run tests on commit** (pre-commit hook)
-- ✅ **Run tests in CI** (GitHub Actions, etc.)
+- **Use transaction rollback** for fast, isolated tests
+- **Keep demo_data.sql in sync** with schema
+- **Load demo data once** (before test suite, not per test)
+- **Test business logic** (validation, calculations)
+- **Test database operations** (CRUD, queries)
+- **Test HTTP handlers** (request/response, routing)
+- **Use table-driven tests** for comprehensive coverage
+- **Run tests on commit** (pre-commit hook)
+- **Run tests in CI** (GitHub Actions, etc.)
 
-### Don'ts ❌
+### Don'ts
 
-- ❌ **Don't create separate test database** (use transaction rollback)
-- ❌ **Don't use mocks for database** (test real queries)
-- ❌ **Don't skip tests** (run all tests on every commit)
-- ❌ **Don't ignore flaky tests** (fix or remove them)
-- ❌ **Don't test framework code** (test your code, not Gin/GORM)
+- **Don't create separate test database** (use transaction rollback)
+- **Don't use mocks for database** (test real queries)
+- **Don't skip tests** (run all tests on every commit)
+- **Don't ignore flaky tests** (fix or remove them)
+- **Don't test framework code** (test your code, not Gin/GORM)
 
 ### Coverage Targets
 
@@ -1033,10 +1032,10 @@ psql "$DATABASE_URL" -f migrations/demo_data.sql
 
 ### Tests Are Slow
 
-- ✅ Use transaction rollback (not separate DB)
-- ✅ Load demo data once (TestMain, not per test)
-- ✅ Run tests in parallel (`t.Parallel()` for independent tests)
-- ✅ Use shorter timeouts (`-timeout 30s`)
+- Use transaction rollback (not separate DB)
+- Load demo data once (TestMain, not per test)
+- Run tests in parallel (`t.Parallel()` for independent tests)
+- Use shorter timeouts (`-timeout 30s`)
 
 ### Flaky Tests
 

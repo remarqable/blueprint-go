@@ -27,7 +27,7 @@ cat blueprint/claude.md  # Follow the 30-minute bootstrap
    # DON'T do this:
    cd blueprint
    git add .
-   git commit -m "changes"  # ❌ This modifies the blueprint
+   git commit -m "changes"  # This modifies the blueprint
    ```
 
 2. **The submodule is tracked as a reference only:**
@@ -96,7 +96,7 @@ Detailed architecture and coding standards in `patterns/`:
 **Core — applies to every project:**
 
 - **[mvc.md](patterns/mvc.md)** - Models (fat), Views (templates), Controllers (thin)
-- **[database.md](patterns/database.md)** - Migrations, JSONB, full-text search, indexes, Row-Level Security
+- **[database.md](patterns/database.md)** - Migrations, JSONB, full-text search, indexes
 - **[data-modeling.md](patterns/data-modeling.md)** - Evidence vs derivation, temporal data, graph shapes
 - **[auth.md](patterns/auth.md)** - Magic links, sessions, OAuth
 - **[security.md](patterns/security.md)** - CSRF, rate limiting, input validation
@@ -107,6 +107,7 @@ Detailed architecture and coding standards in `patterns/`:
 
 **Layers — read only when the project needs them:**
 
+- **[tenancy.md](patterns/tenancy.md)** - Row-Level Security, roles, request/worker scoping, isolation tests
 - **[jobs.md](patterns/jobs.md)** - Durable Postgres queue, retries, idempotency, workers
 - **[realtime.md](patterns/realtime.md)** - WebSocket/SSE, fanout, ordering, reconnect-and-resume
 - **[ai.md](patterns/ai.md)** - LLM providers, structured output, provenance, cost control, evals
@@ -118,6 +119,18 @@ Detailed architecture and coding standards in `patterns/`:
 The blueprint is one architecture with optional layers, not a menu. Establish
 the project configuration in [claude.md](claude.md#project-configuration) first,
 then read only the layers whose condition holds.
+
+### Verifying it
+
+`examples/` is a compiling skeleton of the platform code these documents
+describe — handles, tenant scoping, the job queue, the model provider — with
+tests asserting the properties the docs claim. CI builds and tests it, so a
+pattern that stops compiling fails the build rather than reaching someone's
+project.
+
+```bash
+cd examples && go test ./... -race
+```
 
 ### Checking the docs
 
@@ -142,11 +155,11 @@ internal link and heading anchor, and runs in CI.
 
 **Key Principles:**
 
-- ✅ Fat models, thin controllers
-- ✅ Server-rendered HTML (no SPA complexity)
-- ✅ HTMX for rich interactivity without JavaScript
-- ✅ Bootstrap for professional UI
-- ✅ Progressive enhancement (works without JavaScript)
+- Fat models, thin controllers
+- Server-rendered HTML (no SPA complexity)
+- HTMX for rich interactivity without JavaScript
+- Bootstrap for professional UI
+- Progressive enhancement (works without JavaScript)
 
 ---
 
@@ -164,21 +177,21 @@ internal link and heading anchor, and runs in CI.
 
 ### Built-in Patterns
 
-- ✅ **Internationalization (i18n)** - Multi-language from day one
-- ✅ **Magic link authentication** - Passwordless, secure
-- ✅ **CSRF protection** - All state-changing requests protected
-- ✅ **Rate limiting** - Prevent abuse
-- ✅ **Input validation** - Server-side validation in models
-- ✅ **Transaction rollback testing** - Fast, isolated tests
-- ✅ **Error handling** - Structured errors with i18n
-- ✅ **Request logging** - Structured logs with request context
+- **Internationalization (i18n)** - Multi-language from day one
+- **Magic link authentication** - Passwordless, secure
+- **CSRF protection** - All state-changing requests protected
+- **Rate limiting** - Prevent abuse
+- **Input validation** - Server-side validation in models
+- **Transaction rollback testing** - Fast, isolated tests
+- **Error handling** - Structured errors with i18n
+- **Request logging** - Structured logs with request context
 
 ### Data Patterns
 
 - **B2C (default)**: User-owned data with `user_id` foreign keys
 - **B2B (optional)**: Multi-tenant with PostgreSQL Row-Level Security (RLS)
 
-See [patterns/database.md#multi-tenancy](patterns/database.md#multi-tenancy) for migration guide.
+See [patterns/tenancy.md](patterns/tenancy.md) for the full guide.
 
 
 ---

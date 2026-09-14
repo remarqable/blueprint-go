@@ -31,11 +31,11 @@
 
 ### Why This Stack
 
-- ✅ No JavaScript framework complexity
-- ✅ No build tools to maintain
-- ✅ Works with JavaScript disabled
-- ✅ Fast development (copy Bootstrap classes)
-- ✅ Future-proof (HTML + CSS don't deprecate)
+- No JavaScript framework complexity
+- No build tools to maintain
+- Works with JavaScript disabled
+- Fast development (copy Bootstrap classes)
+- Future-proof (HTML + CSS don't deprecate)
 
 ---
 
@@ -535,14 +535,14 @@ body {
 
 ### Checklist
 
-- ✅ Use semantic HTML (`<button>`, `<nav>`, `<main>`, `<article>`)
-- ✅ Label all form inputs with `<label for="id">`
-- ✅ Add `alt` text to images
-- ✅ Use ARIA labels where needed (`aria-label`, `aria-describedby`)
-- ✅ Ensure keyboard navigation (Tab, Enter, Escape)
-- ✅ Maintain color contrast (WCAG AA minimum: 4.5:1)
-- ✅ Test with screen readers (VoiceOver, NVDA)
-- ✅ Use `role` attributes for dynamic content
+- Use semantic HTML (`<button>`, `<nav>`, `<main>`, `<article>`)
+- Label all form inputs with `<label for="id">`
+- Add `alt` text to images
+- Use ARIA labels where needed (`aria-label`, `aria-describedby`)
+- Ensure keyboard navigation (Tab, Enter, Escape)
+- Maintain color contrast (WCAG AA minimum: 4.5:1)
+- Test with screen readers (VoiceOver, NVDA)
+- Use `role` attributes for dynamic content
 
 ### Examples
 
@@ -640,25 +640,25 @@ Target scores:
 
 ## Best Practices
 
-### Do's ✅
+### Do's
 
-- ✅ **Reuse Bootstrap classes** (never invent custom classes)
-- ✅ **Keep app.css under 100 lines** (brand overrides only)
-- ✅ **No build pipeline** (commit CSS/JS directly)
-- ✅ **Progressive enhancement** (works without JS)
-- ✅ **Mobile-first** (design for small screens, scale up)
-- ✅ **Semantic HTML** (use correct elements)
-- ✅ **Test accessibility** (keyboard nav, screen readers)
-- ✅ **Version-lock dependencies** (vendor files or CDN with version)
+- **Reuse Bootstrap classes** (never invent custom classes)
+- **Keep app.css under 100 lines** (brand overrides only)
+- **No build pipeline** (commit CSS/JS directly)
+- **Progressive enhancement** (works without JS)
+- **Mobile-first** (design for small screens, scale up)
+- **Semantic HTML** (use correct elements)
+- **Test accessibility** (keyboard nav, screen readers)
+- **Version-lock dependencies** (vendor files or CDN with version)
 
-### Don'ts ❌
+### Don'ts
 
-- ❌ **Don't use Tailwind** (Bootstrap is enough)
-- ❌ **Don't create custom frameworks** (Bootstrap utilities cover 95%)
-- ❌ **Don't add npm** (no build tools)
-- ❌ **Don't write custom JavaScript** (HTMX handles interactivity)
-- ❌ **Don't override Bootstrap deeply** (brand colors only)
-- ❌ **Don't support old browsers** (evergreen browsers only: Chrome, Firefox, Safari, Edge)
+- **Don't use Tailwind** (Bootstrap is enough)
+- **Don't create custom frameworks** (Bootstrap utilities cover 95%)
+- **Don't add npm** (no build tools)
+- **Don't write custom JavaScript** (HTMX handles interactivity)
+- **Don't override Bootstrap deeply** (brand colors only)
+- **Don't support old browsers** (evergreen browsers only: Chrome, Firefox, Safari, Edge)
 
 ### When to Break the Rules (Rarely)
 

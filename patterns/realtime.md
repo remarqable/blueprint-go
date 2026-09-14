@@ -331,7 +331,7 @@ hour ago may since have been removed from a channel or from the workspace.
 
 Because you [publish pointers, not payloads](#fanout-across-processes), the
 authoritative check happens when the client fetches the body over HTTP, through
-the ordinary tenant-scoped path in [database.md](database.md#multi-tenancy).
+the ordinary tenant-scoped path in [database.md](tenancy.md).
 The gateway's subscribe check is an optimisation that avoids waking clients
 pointlessly; it is not the security boundary.
 
