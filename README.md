@@ -39,7 +39,7 @@ cat blueprint/claude.md  # Follow the 30-minute bootstrap
    ```bash
    cd blueprint
    git fetch
-   git checkout master  # or a specific version tag like v1.0.0
+   git checkout origin/main  # or a specific commit
    cd ..
    git add blueprint
    git commit -m "Update blueprint to latest version"
@@ -57,21 +57,21 @@ cat blueprint/claude.md  # Follow the 30-minute bootstrap
 
 ### Versioning & Updates
 
-This blueprint uses **semantic versioning** (v1.0.0, v1.1.0, v2.0.0, etc.).
+A submodule always pins an exact commit, which is the guarantee you want: the
+blueprint your project was built against cannot change under you.
 
-**Quick version pinning:**
 ```bash
-# Pin to specific version during setup
-cd blueprint && git checkout v1.0.0
-cd .. && git add blueprint && git commit -m "Pin blueprint to v1.0.0"
+# Pin to the current commit during setup (this is what `git submodule add` does)
+cd .. && git add blueprint && git commit -m "Pin the blueprint"
 
-# Update to newer version later
-cd blueprint && git fetch --tags && git checkout v1.1.0
-cd .. && git add blueprint && git commit -m "Update blueprint to v1.1.0"
+# Move to a newer one deliberately, and read what changed first
+cd blueprint && git fetch && git log --oneline HEAD..origin/main
+cd blueprint && git checkout <commit>
+cd .. && git add blueprint && git commit -m "Update the blueprint to <commit>"
 ```
 
-**For complete versioning guide** (creating releases, migration guides, stable branches):
-→ **[Blueprint Usage Guide](https://github.com/remarqable/SDLC/blob/main/processes/blueprint-usage.md)** in the SDLC repository
+No version tags are published yet, so pin by commit and move deliberately when
+you update.
 
 ---
 
@@ -167,7 +167,7 @@ internal link and heading anchor, and runs in CI.
 
 ### Core Stack
 
-- **Go 1.21+** with Gin web framework
+- **Go 1.23+** with Gin web framework
 - **PostgreSQL 15+** with goose migrations
 - **HTMX 1.9+** for rich interactivity
 - **Bootstrap 5.3+** for responsive UI
@@ -209,7 +209,7 @@ See [patterns/tenancy.md](patterns/tenancy.md) for the full guide.
 ### Design Decisions
 
 - **Fat models, thin controllers** - Business logic lives with data
-- **No ORM** - Clear SQL queries, predictable performance
+- **GORM for reads and writes, SQL for schema** - migrations are goose SQL you can read, so the schema is never inferred from struct tags
 - **No build step** - Bootstrap + HTMX work out of the box
 - **No custom CSS** - Bootstrap utilities cover 95% of use cases
 - **Progressive enhancement** - Works without JavaScript
@@ -221,13 +221,13 @@ See [patterns/tenancy.md](patterns/tenancy.md) for the full guide.
 When using as a git submodule, pin to specific versions:
 
 ```bash
-# In your project with blueprint submodule
+# In your project with the blueprint submodule
 cd blueprint
 git fetch
-git checkout v1.0.0  # Pin to specific version
+git checkout <commit>
 cd ..
 git add blueprint
-git commit -m "Update blueprint to v1.0.0"
+git commit -m "Update the blueprint to <commit>"
 ```
 
 ---
@@ -248,7 +248,8 @@ Improvements should come from **real-world usage**:
 
 ## 📜 License
 
-MIT License - Use this as a starting point for your projects.
+[MIT](LICENSE). Use it, copy it into your own project, change it. Attribution
+is appreciated but the licence only asks you to keep the notice.
 
 ---
 
