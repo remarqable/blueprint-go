@@ -46,7 +46,9 @@ def headings(text):
 
 def main():
     docs = sorted(
-        [p for p in ROOT.glob("*.md")] + [p for p in ROOT.glob("patterns/*.md")]
+        [p for p in ROOT.glob("*.md")]
+        + [p for p in ROOT.glob("patterns/*.md")]
+        + [p for p in ROOT.glob("skills/**/*.md")]
     )
     if not docs:
         print("no markdown files found", file=sys.stderr)

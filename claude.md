@@ -20,12 +20,20 @@ that does not compile, or worse, compiles and is wrong.
 `tenancy: personal`, do not open the multi-tenancy section at all — not for
 reference, not for context.
 
+`skills/` is not a layer and has no condition. It holds procedures rather than
+patterns, and [`skills/blueprint-go-audit`](skills/blueprint-go-audit/SKILL.md)
+runs on every project — see [Verification](#verification-every-change-is-audited).
+
 ---
 
 ## Project Configuration
 
-> **AI agents:** ask the questions below before creating any files, then record
-> the answers here. This block is authoritative for everything that follows.
+> **AI agents:** ask the questions below before creating any files. Record the
+> answers in the **project's** root `claude.md` — the block below holds upstream
+> defaults, and this file is a shared submodule, so editing it here changes every
+> project that mounts the blueprint. The project's recorded answers are
+> authoritative for everything that follows, and are what the
+> [blueprint audit](#verification-every-change-is-audited) reviews against.
 
 ```yaml
 tenancy:   shared     # shared | personal
@@ -500,6 +508,53 @@ func main() {
 | [embed.md](patterns/embed.md) | `deploy: binary` | Single-binary asset embedding |
 | [scale.md](patterns/scale.md) | The dominant table is large | Pagination, partitioning, pooling, caching |
 
+### Skills — procedures to run, not patterns to read
+
+| Skill | Purpose | When |
+|-------|---------|------|
+| [blueprint-go-audit](skills/blueprint-go-audit/SKILL.md) | Independent adversarial review of the changed files, with a scored conformance table | **Mandatory** after every implementation, before reporting the work complete |
+
+See [skills/README.md](skills/README.md) for how to add one.
+
+---
+
+## Verification: every change is audited
+
+**All code generated against this blueprint must conform to it, and conformance
+is checked rather than assumed.** After implementing anything — a new project, a
+feature, a bug fix, a refactor — and **before reporting the work complete**, run
+[`skills/blueprint-go-audit`](skills/blueprint-go-audit/SKILL.md).
+
+`gofmt`, `go vet` and `go test -race` run first and are not the same thing. Read
+the framing of the non-negotiables below: **each fails silently.** A handler on
+`db.Get()` instead of `db.WithTenant` compiles, vets clean, passes, and leaks in
+production. The toolchain proves the code runs; the audit proves it conforms.
+
+The audit is run by a separate reviewer agent that never sees the goal or the
+plan, because the agent that drifted is the one being asked whether it drifted.
+The skill holds the procedure and the reasoning; this section is only the
+requirement.
+
+Read `blueprint/skills/blueprint-go-audit/SKILL.md` and follow it — no install,
+so the gate holds in a fresh clone. (`make skills` also exposes it as
+`/blueprint-go-audit` for humans; the agent never needs it.)
+
+| Result | What to do |
+|--------|-----------|
+| **FAIL** | Fix the Critical and High violations, re-run the audit. Do not commit, do not report the work complete. |
+| **WARN** | Report complete **with the violations table**, naming the ones you left. |
+| **PASS** | Report complete, include the conformance table. |
+
+Print what the reviewer returned rather than your summary of it. A finding you
+chose not to fix is a decision when the user can see it and a regression when you
+quietly drop it.
+
+The reviewer is told which layers are enabled and is forbidden to open the rest.
+It takes that list from the **project's** root `claude.md`, not from the [Project
+Configuration](#project-configuration) block above — this file is a shared
+submodule, so that block holds upstream defaults. Record the real answers there
+and the audit does not have to infer them.
+
 ---
 
 ## Non-negotiables
@@ -560,6 +615,13 @@ list: nothing errors, nothing logs, and the damage is discovered late.
 - All user-visible strings in i18n catalogs.
 - Every interactive component carries its own ARIA.
 
+**Verification**
+- Every implementation ends with the
+  [blueprint audit](#verification-every-change-is-audited), run by a separate
+  agent, before the work is reported complete. A green build is the
+  precondition, not the result — everything on this list compiles and vets
+  clean.
+
 **Observability**
 - One `trace_id` spans request → job → model call, and is a column on `job` and
   `ai_call`.
@@ -573,14 +635,22 @@ list: nothing errors, nothing logs, and the damage is discovered late.
 
 **Bootstrapping a new project**
 1. Ask the [configuration questions](#the-questions-to-ask). Do not guess.
-2. Record answers in [Project Configuration](#project-configuration).
+2. Record the answers in the **project's own** root `claude.md`, not in this
+   submodule — this file is shared, and editing it changes every project.
 3. Read the core patterns. Read layer docs **only** where the condition holds.
 4. Execute Quick Start steps 1–7 in order.
 5. Verify `make run` serves `/healthz`.
+6. Run the [blueprint audit](#verification-every-change-is-audited) over
+   everything you generated — by reading its `SKILL.md`, which needs no install.
+   Fix any FAIL before handing the project over.
 
 **Adding a feature**
-Find the relevant pattern doc in the index and follow it. Do not invent a second
-way to do something the blueprint already covers.
+1. Find the relevant pattern doc in the index and follow it. Do not invent a
+   second way to do something the blueprint already covers.
+2. Implement.
+3. Run the [blueprint audit](#verification-every-change-is-audited) over the
+   files you changed, and act on the result, **before** reporting the work
+   complete. This is not conditional on the size of the change.
 
 **Before committing**
 ```bash
@@ -589,6 +659,9 @@ go vet ./...
 go build ./...
 go test ./... -race -cover
 ```
+Then the [blueprint audit](#verification-every-change-is-audited). These commands
+prove the code compiles and passes; they cannot prove it conforms, because every
+non-negotiable above compiles and vets clean.
 
 **Verifying the blueprint itself.** `examples/` is a compiling skeleton of the
 platform code in these documents, with tests asserting what they claim —
@@ -602,7 +675,7 @@ builds it. If a pattern here stops compiling, that build fails.
 ```makefile
 APP=yourapp
 
-.PHONY: run build test fmt migrate worker gateway
+.PHONY: run build test fmt migrate worker gateway skills
 
 run:
 	export $$(cat config/local.env | xargs) && go run ./cmd/${APP:-api}
@@ -627,6 +700,32 @@ migrate:
 
 migrate-status:
 	goose -dir migrations postgres "$${DATABASE_OWNER_URL}" status
+
+skills:
+	@set -e; \
+	found=0; \
+	for BP in . $$(git config -f .gitmodules --get-regexp '\.path$$' 2>/dev/null | awk '{print $$2}'); do \
+	  [ -d "$$BP/skills" ] || continue; \
+	  mkdir -p .claude/skills; \
+	  for d in "$$BP"/skills/*/; do \
+	    [ -f "$$d/SKILL.md" ] || continue; \
+	    n=$$(basename "$$d"); \
+	    rm -rf ".claude/skills/$$n"; \
+	    ln -s "$$(cd "$$d" && pwd)" ".claude/skills/$$n"; \
+	    echo "  linked /$$n"; \
+	    found=1; \
+	  done; \
+	done; \
+	if [ "$$found" = "0" ]; then \
+	  echo "No blueprint skills found."; \
+	  echo "The blueprint submodule is missing or not initialized. Run:"; \
+	  echo "  git submodule update --init --recursive"; \
+	  exit 1; \
+	fi; \
+	if [ -f .gitignore ] && ! grep -qxF '.claude/skills/' .gitignore; then \
+	  echo '.claude/skills/' >> .gitignore; \
+	fi; \
+	echo "Skills linked. Restart Claude Code to pick them up."
 ```
 
 ---

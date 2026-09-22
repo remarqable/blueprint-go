@@ -48,3 +48,4 @@ temp/
 # example module build output
 examples/bin/
 examples/data/
+.claude/skills/

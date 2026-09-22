@@ -116,20 +116,50 @@ Detailed architecture and coding standards in `patterns/`:
 - **[embed.md](patterns/embed.md)** - Single-binary asset embedding
 - **[scale.md](patterns/scale.md)** - Cursor pagination, partitioning, pooling, caching
 
+### Skills
+
+Procedures to run, as distinct from patterns to read, in `skills/`:
+
+- **[blueprint-go-audit](skills/blueprint-go-audit/SKILL.md)** - the mandatory
+  conformance gate. See [skills/README.md](skills/README.md).
+
 The blueprint is one architecture with optional layers, not a menu. Establish
 the project configuration in [claude.md](claude.md#project-configuration) first,
 then read only the layers whose condition holds.
 
 ### Verifying it
 
-`examples/` is a compiling skeleton of the platform code these documents
-describe — handles, tenant scoping, the job queue, the model provider — with
-tests asserting the properties the docs claim. CI builds and tests it, so a
-pattern that stops compiling fails the build rather than reaching someone's
-project.
+Two different things get verified, and neither substitutes for the other.
+
+**That the blueprint is right.** `examples/` is a compiling skeleton of the
+platform code these documents describe — handles, tenant scoping, the job queue,
+the model provider — with tests asserting the properties the docs claim. CI
+builds and tests it, so a pattern that stops compiling fails the build rather
+than reaching someone's project.
 
 ```bash
 cd examples && go test ./... -race
+```
+
+**That code built from it conforms.** Every implementation against this blueprint
+ends with the **blueprint audit** — a separate reviewer agent, over the changed
+files, that never sees the goal or the plan, because the agent that wrote the
+code can justify every shortcut it took. It reports violations and a scored
+conformance table, and Critical or High findings block the commit.
+
+This matters more in Go than it looks. `gofmt`, `go vet` and `go test -race` are
+good enough that a green build feels like a passing review, but every
+non-negotiable in [claude.md](claude.md#non-negotiables) fails *silently* — a
+handler on `db.Get()` rather than `db.WithTenant` compiles, vets clean, passes,
+and leaks in production.
+
+The agent runs it by reading `blueprint/skills/blueprint-go-audit/SKILL.md`, so
+the gate needs nothing installed and holds in a fresh clone. To invoke the same
+audit yourself as a slash command:
+
+```bash
+make skills        # symlink skills/* into .claude/skills/
+# then: /blueprint-go-audit
 ```
 
 ### Checking the docs
