@@ -51,7 +51,7 @@ func main() {
 		log.Fatalf("schema: %v", err)
 	}
 
-	log.Println("api ready (routing omitted: see patterns/mvc.md)")
+	log.Println("api ready (routing omitted: see patterns/core/mvc.md)")
 }
 
 func envOr(k, fallback string) string {

@@ -1,5 +1,5 @@
 // Package models holds the domain. Fat models: business logic and queries live
-// here, controllers stay thin. See patterns/mvc.md.
+// here, controllers stay thin. See patterns/core/mvc.md.
 package models
 
 import "time"

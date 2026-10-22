@@ -284,7 +284,7 @@ Rules that follow from the shape:
   score; decide in the view layer what is stated, what is hedged, and what is
   hidden. Thresholds change weekly and you do not want that to be a migration.
 
-See [data-modeling.md](data-modeling.md) for the full temporal graph shape.
+See [data-modeling.md](core/data-modeling.md) for the full temporal graph shape.
 
 ---
 
@@ -444,7 +444,7 @@ Three things people get wrong:
 **Hybrid beats pure vector.** Semantic search cannot find `52.14.23.18`.
 Full-text cannot find "what IP did we use for production". Run both and fuse the
 rankings; the blueprint's FTS setup is in
-[database.md](database.md#full-text-search).
+[database.md](core/database.md#full-text-search).
 
 **Recency and permission are filters, not re-ranking.** Apply `tenant_id`,
 visibility, and date windows in the query. Retrieving 50 rows and discarding 45

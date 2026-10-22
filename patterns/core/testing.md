@@ -824,9 +824,9 @@ Each optional layer has its own testing notes in its own doc. The short version:
 
 | Layer | Approach | Detail |
 |---|---|---|
-| `jobs` | Test handlers as plain functions; drain the queue synchronously in controller tests with `jobs.WorkOff(t)` rather than running a worker | [jobs.md](jobs.md#testing) |
-| `realtime` | Drive the hub in-process, no network. Assert eviction, expiry, gap behaviour | [realtime.md](realtime.md#testing) |
-| `ai` | Application tests use `ai.Fake`; parser tests use recorded fixtures in `testdata/`; prompt quality lives in a separate eval suite | [ai.md](ai.md#testing) |
+| `jobs` | Test handlers as plain functions; drain the queue synchronously in controller tests with `jobs.WorkOff(t)` rather than running a worker | [jobs.md](../jobs.md#testing) |
+| `realtime` | Drive the hub in-process, no network. Assert eviction, expiry, gap behaviour | [realtime.md](../realtime.md#testing) |
+| `ai` | Application tests use `ai.Fake`; parser tests use recorded fixtures in `testdata/`; prompt quality lives in a separate eval suite | [ai.md](../ai.md#testing) |
 
 The rule shared by all three: **no test in `go test ./...` touches the network.**
 A suite that calls a model provider is slow, flaky, costly, and

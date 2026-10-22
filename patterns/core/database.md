@@ -598,7 +598,7 @@ CREATE INDEX idx_product_name_trgm ON product USING GIN (name gin_trgm_ops);
 Isolating tenants is its own subject, with four ways to build something that
 looks like isolation and enforces nothing.
 
-→ **`tenancy: shared`**: [tenancy.md](tenancy.md)
+→ **`tenancy: shared`**: [tenancy.md](../tenancy.md)
 → **`tenancy: personal`**: nothing to do. Data belongs to one user; use a
   `user_id` foreign key.
 
@@ -812,4 +812,4 @@ helper the application uses, and run CI as the runtime role — not as the owner
 
 ---
 
-**Next:** See [htmx.md](htmx.md) for frontend interactivity patterns
+**Next:** See [htmx.md](../htmx.md) for frontend interactivity patterns

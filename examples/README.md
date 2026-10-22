@@ -8,10 +8,10 @@ is the load-bearing platform code from `patterns/`, built and tested:
 
 | Package | Pattern doc |
 |---|---|
-| `internal/platform/db` | [database.md](../patterns/database.md), [tenancy.md](../patterns/tenancy.md) |
+| `internal/platform/db` | [database.md](../patterns/core/database.md), [tenancy.md](../patterns/tenancy.md) |
 | `internal/platform/jobs` | [jobs.md](../patterns/jobs.md) |
 | `internal/platform/ai` | [ai.md](../patterns/ai.md) |
-| `internal/models` | [mvc.md](../patterns/mvc.md), [data-modeling.md](../patterns/data-modeling.md) |
+| `internal/models` | [mvc.md](../patterns/core/mvc.md), [data-modeling.md](../patterns/core/data-modeling.md) |
 
 ```bash
 cd examples

@@ -1,6 +1,6 @@
 ---
 name: blueprint-go-audit
-description: Audit Go code against the Go + Gin SaaS blueprint. Launches an independent adversarial reviewer agent over the changed files, then reports violations and a scored conformance table across MVC, database, data modeling, security, testing, observability, i18n, deployment, and the enabled layers. Respects the blueprint's scoped-reading rule. This is the mandatory verification gate — run it after every implementation, before reporting the work complete.
+description: Audit Go code against the Go + Gin SaaS blueprint. Launches an independent adversarial reviewer agent over the changed files, then reports violations and a scored conformance table across MVC, database, data modeling, auth, security, testing, observability, i18n, deployment, record audit, Go conventions, and the enabled layers (tenancy, jobs, realtime, AI, frontend, HTMX, mobile navigation, embed, scale). Runs gofmt, go vet, go test -race and the stylesheet build check first. Respects the blueprint's scoped-reading rule. This is the mandatory verification gate — run it after every implementation, before reporting the work complete.
 ---
 
 # Blueprint Audit (Go)
@@ -31,10 +31,13 @@ see any of that. This audit is what does.
 
 So:
 
-- **Do not skip it because the change is small.** The violations this catches are
-  overwhelmingly small changes.
+- **Do not skip it because the change is small.** The violations this catches —
+  a handler on `db.Get()`, a policy without `WITH CHECK`, an unbuilt stylesheet —
+  are overwhelmingly small changes. Size is not evidence of safety.
 - **Do not skip it because the build is green.** Green is the precondition, not
   the result.
+- **Do not skip it because you are confident.** Confidence is the symptom being
+  controlled for. See below.
 - **Do not report the audit's result as your own judgment.** Print what the
   reviewer returned.
 
@@ -52,10 +55,10 @@ architecture with optional layers, and reading a layer that does not apply
 produces code that does not compile — or worse, compiles and is wrong. The
 blueprint states this as its first rule, and the reviewer must obey it too:
 
-- The core patterns apply to every project. Always in scope: `mvc`, `database`,
+- `patterns/core/` applies to every project. Always in scope: `mvc`, `database`,
   `data-modeling`, `auth`, `security`, `testing`, `observability`, `i18n`,
-  `deployment`.
-- A layer doc is in scope **only** if its condition holds:
+  `deployment`, `audit`.
+- A layer doc in `patterns/` is in scope **only** if its condition holds:
 
   | Doc | Condition |
   |-----|-----------|
@@ -63,9 +66,15 @@ blueprint states this as its first rule, and the reviewer must obey it too:
   | `jobs.md` | `jobs: true` |
   | `realtime.md` | `realtime: true` |
   | `ai.md` | `ai: true` (which requires `jobs: true`) |
-  | `frontend.md`, `htmx.md` | `frontend: server` — both are out of scope on `frontend: api` |
+  | `frontend.md`, `htmx.md`, `mobile-navigation.md` | `frontend: server` — all three are out of scope on `frontend: api` |
   | `embed.md` | `deploy: binary` |
   | `scale.md` | the dominant table is large, and the change touches its query path |
+
+- Two decisions select a section *within* a doc rather than a layer doc:
+  `deploy` picks one shape inside `patterns/core/deployment.md` (the systemd
+  service on `binary`, the Docker build on `docker`), and `database` picks the
+  PostgreSQL or SQLite branch wherever a doc carries both. Review against the
+  chosen branch only.
 
 A reviewer that reads a disabled layer will report violations for patterns the
 project deliberately does not implement. That is worse than no review, because
@@ -101,7 +110,7 @@ diff` that may also sweep in unrelated working-tree edits.
 
 | File pattern | Brings in |
 |---|---|
-| `internal/models/*.go` | MVC, database, data-modeling, tenancy |
+| `internal/models/*.go` | MVC, database, data-modeling, record audit, tenancy |
 | `internal/controllers/*.go` | MVC, auth, security |
 | `internal/middleware/*.go` | Security, auth, observability |
 | `internal/platform/db/**` | Database, tenancy |
@@ -109,8 +118,10 @@ diff` that may also sweep in unrelated working-tree edits.
 | `internal/jobs/**`, `cmd/worker/**` | Jobs layer |
 | `internal/gateway/**`, `cmd/gateway/**` | Realtime layer |
 | `internal/platform/ai/**`, `evals/**` | AI layer |
-| `views/**/*.html` | Frontend, HTMX, i18n |
-| `migrations/*.sql` | Database, tenancy |
+| `views/**/*.html` | Frontend, HTMX, mobile navigation, i18n, CSRF — and check `app.css` was rebuilt |
+| `static/css/**` | Frontend — and check `app.css` was rebuilt |
+| `internal/assets/**` | Embed layer, plus whatever the embedded views and styles bring in |
+| `migrations/*.sql` | Database, record audit, tenancy |
 | `cmd/*/main.go` | Deployment, observability |
 | `*_test.go` | Testing |
 | `lang/*.json` | i18n |
@@ -129,7 +140,12 @@ It is `blueprint/` or `blueprint-go/` in a single-language project and
 Everything below is relative to that path:
 
 - Master doc: `<blueprint>/claude.md` (lowercase)
-- Patterns: `<blueprint>/patterns/*.md` — flat, no `core/` subdirectory
+- Always-applicable patterns: `<blueprint>/patterns/core/` — `audit`, `auth`,
+  `data-modeling`, `database`, `deployment`, `i18n`, `mvc`, `observability`,
+  `security`, `testing`
+- Layer docs: `<blueprint>/patterns/` — `ai.md`, `embed.md`, `frontend.md`,
+  `htmx.md`, `jobs.md`, `mobile-navigation.md`, `realtime.md`, `scale.md`,
+  `tenancy.md`
 - Compiling reference: `<blueprint>/examples/` — the platform code the patterns
   are extracted from, with tests asserting what they claim
 
@@ -139,8 +155,9 @@ patterns you could not read.
 
 **Determining which layers are active.** `<blueprint>/claude.md` carries a
 Project Configuration block, but the blueprint is a shared submodule, so that
-block usually holds **upstream defaults, not this project's answers**. Never take
-it at face value. Establish the real configuration in this order:
+block holds **upstream defaults, not this project's answers**. Never take it at
+face value. Establish the real configuration — `tenancy`, `database`,
+`realtime`, `jobs`, `ai`, `frontend`, `deploy` — in this order:
 
 1. If the project records its own answers (a root `claude.md` / `CLAUDE.md`,
    `AI.md`, an ADR under `docs/adr/`), that record wins.
@@ -153,11 +170,14 @@ Evidence to look for:
 |---|---|
 | `tenancy: shared` | A tenant model, `tenant_id` columns, RLS policies in migrations, a `WithTenant` helper in `platform/db` |
 | `database` | The driver imported in `platform/db` (`gorm.io/driver/postgres` vs `sqlite`); note that `tenancy: shared` in production implies postgres |
-| `jobs: true` | A `cmd/worker` binary, a `job` table, an enqueue helper |
 | `realtime: true` | A `cmd/gateway` binary, a connections or channel package |
+| `jobs: true` | A `cmd/worker` binary, a `job` table, an enqueue helper |
 | `ai: true` | An `internal/platform/ai` package, an `ai_call` table, an `evals/` directory |
-| `frontend` | `server` if there is a `views/` tree and `html/template` rendering; `api` if handlers only return JSON |
+| `frontend` | `server` if there is a `views/` tree, `html/template` rendering and a Tailwind `static/css/input.css`; `api` if handlers only return JSON |
 | `deploy` | `binary` if assets are embedded and there is a systemd unit; `docker` if there is a Dockerfile |
+
+`scale.md` is a judgement, not a flag: it applies when the dominant table is
+large. Say which way you judged it.
 
 ### Step 3: Run the Mechanical Checks First
 
@@ -171,7 +191,22 @@ go build ./...
 go test ./... -race -count=1
 ```
 
-And, if the change touched the blueprint submodule's own docs:
+On `frontend: server`, if the change touched a template or the Tailwind input,
+check that the committed stylesheet is current. An uncompiled class renders
+unstyled in production and nowhere else, and no Go check can see it:
+
+```bash
+make css                                 # Tailwind standalone binary, rebuilds app.css
+git status --porcelain -- '*app.css'     # must print nothing
+```
+
+If `app.css` changed, the committed stylesheet was stale. Report it as a
+finding and leave the rebuilt file for the implementer to commit. If the project
+has no `css` target, say so — the blueprint's Makefile defines one.
+
+Run any grep checks the project or blueprint defines (for example, that
+`db.Unscoped()` appears only under `platform/`), and, if the change touched the
+blueprint submodule's own docs:
 
 ```bash
 <blueprint>/scripts/check-links.py
@@ -183,9 +218,9 @@ problems. Note in the report which checks you ran and what they returned.
 
 ### Step 4: Launch the Reviewer Agent
 
-Use the Agent tool. Give it the changed files, the resolved blueprint path, and —
-critically — the active layer list, so it knows which docs it is forbidden to
-open.
+Use the Agent tool. Give it the changed files, the resolved blueprint path, the
+mechanical check results, and — critically — the active layer list, so it knows
+which docs it is forbidden to open.
 
 ```
 You are a blueprint compliance reviewer for a Go service. Your role is
@@ -200,36 +235,46 @@ Review ONLY these changed files: <changed file paths>
 Blueprint: <resolved blueprint path> (master doc <blueprint>/claude.md)
 
 Active project configuration:
-<the resolved yaml block from Step 2>
+<the resolved yaml block from Step 2: tenancy, database, realtime, jobs,
+ai, frontend, deploy — plus whether scale.md applies>
 
-Mechanical checks already run: <gofmt/vet/build/test results from Step 3>
+Mechanical checks already run: <gofmt/vet/build/test/css/grep results
+from Step 3>
 
 ## Reading rules — these are hard constraints
 
-1. Read the core patterns the changed files pull in. Always in scope:
-   mvc.md, database.md, data-modeling.md, auth.md, security.md,
-   testing.md, observability.md, i18n.md, deployment.md
-2. Read a layer doc ONLY if its condition holds:
-     tenancy.md              -> only if tenancy: shared
-     jobs.md                 -> only if jobs: true
-     realtime.md             -> only if realtime: true
-     ai.md                   -> only if ai: true
-     frontend.md, htmx.md    -> only if frontend: server
-     embed.md                -> only if deploy: binary
-     scale.md                -> only if the change touches the dominant
-                                table's query path
+1. Read the docs in <blueprint>/patterns/core/ that the changed files pull
+   in. Always in scope: mvc.md, database.md, data-modeling.md, auth.md,
+   security.md, testing.md, observability.md, i18n.md, deployment.md,
+   audit.md
+2. Read a layer doc in <blueprint>/patterns/ ONLY if its condition holds:
+     tenancy.md                    -> only if tenancy: shared
+     jobs.md                       -> only if jobs: true
+     realtime.md                   -> only if realtime: true
+     ai.md                         -> only if ai: true
+     frontend.md, htmx.md,
+       mobile-navigation.md        -> only if frontend: server
+     embed.md                      -> only if deploy: binary
+     scale.md                      -> only if the dominant table is large
+                                      and the change touches its query path
    If a layer is disabled, do not open its doc at all — not for reference,
    not for context. On frontend: api there is no view layer to review.
-3. patterns/ is flat. There is no core/ subdirectory — do not invent one.
+3. For deployment and the database engine, read only the branch the
+   configuration selects: the systemd service (deploy: binary) or the
+   Docker build (deploy: docker) inside core/deployment.md, and the
+   postgres or sqlite branch wherever a doc carries both. Do not review
+   against the branch this project did not choose.
 
-Which core docs the changes pull in:
-   Models       -> mvc.md, database.md, data-modeling.md
-   Controllers  -> mvc.md, auth.md, security.md
-   Middleware   -> security.md, auth.md, observability.md
-   Migrations   -> database.md
-   main.go      -> deployment.md, observability.md
-   Templates    -> frontend.md, htmx.md, i18n.md
-   Tests        -> testing.md
+Which docs the changes pull in:
+   Models       -> core/mvc.md, core/database.md, core/data-modeling.md,
+                   core/audit.md
+   Controllers  -> core/mvc.md, core/auth.md, core/security.md
+   Middleware   -> core/security.md, core/auth.md, core/observability.md
+   Migrations   -> core/database.md, core/audit.md
+   main.go      -> core/deployment.md, core/observability.md
+   Templates    -> frontend.md, htmx.md, core/i18n.md; layouts and
+                   navigation partials also mobile-navigation.md
+   Tests        -> core/testing.md
 
 ## Rules
 
@@ -244,6 +289,10 @@ Do NOT:
   rationalization
 - Audit files outside the changed list
 - Open a disabled layer's doc
+
+DO check every changed Go file for MVC violations: business logic in
+controllers, the database handle touched from a controller, validation in
+the wrong place. Controllers parse input, call models, render.
 
 DO check the blueprint's non-negotiables explicitly. Each fails silently,
 which is why they are the list:
@@ -261,10 +310,15 @@ Tenancy (only if tenancy: shared):
 - An unscoped query on a tenant-scoped table is Critical, not Medium
 
 Database:
-- SQL migrations in goose, never AutoMigrate
+- SQL migrations in goose, never AutoMigrate; every schema change has one
 - Migrations run at deploy as the owner, never inside application startup
 - tenant_id leads every composite index on a tenant-scoped table
 - Cursor pagination on the dominant table, not OFFSET
+
+Record audit (core/audit.md):
+- New business tables carry created_by / updated_by as core/audit.md
+  specifies, set by the model layer from the authenticated user — never
+  from request input
 
 Jobs (only if jobs: true):
 - A job is enqueued INSIDE the transaction that produced its cause
@@ -285,8 +339,13 @@ AI (only if ai: true):
 
 Frontend (only if frontend: server):
 - All user-visible strings in i18n catalogs
-- Every interactive component carries its own ARIA
-- Bootstrap 5 classes, not invented custom ones; no npm/webpack/vite
+- Every interactive component carries its own ARIA; Tailwind ships none
+- Tailwind v4 utilities and the component layer in input.css, not invented
+  one-off CSS; Alpine.js for client state; no npm, webpack or vite
+- Logical properties (ms-/me-/ps-/pe-/text-start), never ml-/mr-/text-left
+  — physical properties silently break RTL
+- Any template change is reflected in a rebuilt, committed app.css
+- CSRF token on every non-GET form; correct HTMX attributes
 - html/template auto-escaping; no raw HTML unless trusted
 
 Observability:
@@ -309,7 +368,7 @@ Respond with ONLY this:
 
 **Blueprint:** <path> @ <submodule short sha>
 **Active layers:** <the layers you were permitted to read>
-**Mechanical checks:** <gofmt/vet/build/test results>
+**Mechanical checks:** <gofmt/vet/build/test/css/grep results>
 **Files reviewed:** <count>
 **Patterns checked:** <list>
 **Result:** FAIL | WARN | PASS
@@ -323,8 +382,11 @@ If none: "No violations found."
 ### Conformance
 | Pattern | Score | Status | Notes |
 |---------|-------|--------|-------|
-(one row per pattern category you checked; N/A for categories the
-changed files never touched)
+(one row per category: MVC, Database, Data modeling, Record audit, Auth,
+Security, Testing, Observability, i18n, Deployment, Go conventions, and
+one per enabled layer — Tenancy, Jobs, Realtime, AI, Frontend, HTMX,
+Mobile navigation, Embed, Scale. N/A for categories the changed files
+never touched. Leave disabled layers out entirely.)
 
 **Overall: X.X/10**
 
@@ -351,22 +413,25 @@ The reviewer fills the conformance table using this scale, per pattern category:
 
 **Major** — business logic in a controller, a tenant-scoped query off
 `db.WithTenant`, a policy missing `WITH CHECK`, `AutoMigrate` in place of a goose
-migration, a job enqueued outside its causing transaction, inference in a
-handler, an unbounded send buffer, a missing auth middleware, SQL injection, a
-schema change with no migration, a high-cardinality Prometheus label.
+migration, a schema change with no migration, a job enqueued outside its causing
+transaction, inference in a handler, an unbounded send buffer, a missing auth
+middleware on a protected route, a missing CSRF token, SQL injection, a stale
+`app.css`, a high-cardinality Prometheus label, a violated non-negotiable.
 
 **Minor** — a missing context timeout, an unwrapped user-facing string, a value
-receiver where the blueprint asks for a pointer, naming drift, an oversized file.
+receiver where the blueprint asks for a pointer, a missing doc comment, naming
+drift, an oversized file.
 
 Score `N/A` for any category the changed files never touched. Do not average N/A
 rows into the overall.
 
 Strictness by category:
 
-- **Strict** — tenancy, database, security, jobs durability, AI provenance.
-  These are correctness and safety, and every one of them fails silently.
-- **Moderate** — observability, HTMX usage, Go conventions. Flag them; do not
-  fail the review over one missing context timeout.
+- **Strict** — MVC separation, tenancy, database, security (CSRF, injection,
+  auth), jobs durability, AI provenance. These are correctness and safety, and
+  every one of them fails silently.
+- **Moderate** — observability, HTMX usage, record audit, Go conventions. Flag
+  them; do not fail the review over one missing context timeout.
 - **Lenient** — i18n on admin-only text, doc comments on small helpers, test
   coverage where critical paths are already covered.
 
@@ -406,8 +471,11 @@ regression.
   the single most important rule here.
 - **Never let the reviewer read a disabled layer.** This is the second.
 - This skill reviews and reports. It does not edit code. Fixes happen back in the
-  implementing context, after the report.
+  implementing context, after the report. (`make css` in Step 3 regenerates a
+  build artifact, not source; committing it is the implementer's fix.)
 - Run it standalone, not nested inside another skill's workflow.
+- Findings should be specific enough to act on without further explanation — the
+  review often lands in a PR read by people outside the team.
 - If a violation reveals a genuine gap in the blueprint rather than a mistake in
   the code, say so. The fix belongs in `remarqable/blueprint-go`, where every
   project picks it up — never edited in place inside the submodule checkout. If

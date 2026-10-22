@@ -38,7 +38,7 @@
 ### Recommended
 
 - [ ] **Content Security Policy** (CSP) header
-- [ ] **Subresource Integrity** (SRI) for CDN assets
+- [ ] **Vendored front-end assets** (no CDN; see [frontend.md](../frontend.md#file-structure))
 - [ ] **CORS** configuration (restrict origins)
 - [ ] **Request logging** (with request ID, user ID)
 - [ ] **Error handling** (don't leak internals to users)
@@ -69,6 +69,38 @@ Cross-Site Request Forgery: Attacker tricks user into making unwanted requests o
 <!-- If user is logged in, this deletes their setting -->
 ```
 
+### One Token per Session
+
+Each session gets **one** token, valid until the session ends, and every page
+in it carries that token. Not a fresh token per form, and not one consumed on
+first use. The frontend depends on this: the base layout puts the token in
+`hx-headers` on `<body>` once per page
+([frontend.md](../frontend.md#base-layout)), and every HTMX request from that
+page sends the same value. A single-use token would let the first request
+through and answer every later one with 403. It would also break a second tab
+and the back button.
+
+Single-use buys nothing against CSRF anyway. The attack works because the
+browser attaches the victim's cookie to a forged request; it fails when the
+request must also carry a value the attacker's page cannot read. The
+same-origin policy already stops the attacker reading a per-session token, so
+replacing it after each request adds no protection. What matters is that the
+token is:
+
+- **Bound to the session.** A token from the attacker's own session must not
+  pass for the victim's. Derived as an HMAC of the session cookie, it cannot.
+- **Unguessable and server-keyed.** 256 bits from HMAC-SHA256 with a server
+  secret.
+- **Compared in constant time**, so response timing does not leak it byte by
+  byte.
+- **Backed by an origin check.** A cross-site POST carries an `Origin` (or at
+  least a `Referer`) naming another site; reject it before looking at the
+  token.
+
+The token changes when the session does. Regenerating the session at login
+([Session Regeneration](#session-regeneration)) therefore also rotates the
+token, so a token planted before login is worthless after it.
+
 ### Middleware Implementation
 
 ```go
@@ -76,113 +108,160 @@ Cross-Site Request Forgery: Attacker tricks user into making unwanted requests o
 package middleware
 
 import (
-  "crypto/rand"
-  "encoding/base64"
-  "sync"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"net/http"
+	"net/url"
 
-  "github.com/gin-gonic/gin"
-  "yourapp/internal/platform/errors"
+	"github.com/gin-gonic/gin"
 )
 
-var (
-  csrfTokens = make(map[string]bool)
-  csrfMu     sync.RWMutex
+const (
+	sessionCookie = "session_token" // set at login, auth.md
+	anonCookie    = "__Host-csrf"   // binds the token before login
+	csrfHeader    = "X-CSRF-Token"  // HTMX: hx-headers on <body>
+	csrfField     = "csrf_token"    // plain forms: hidden input
 )
 
-// CSRFMiddleware validates CSRF tokens on state-changing requests
-func CSRFMiddleware() gin.HandlerFunc {
-  return func(c *gin.Context) {
-    method := c.Request.Method
+// CSRF gives each session one token, valid for the session's lifetime, and
+// checks it on every state-changing request together with the request's
+// origin. secret is a server-side key of at least 32 random bytes; origin is
+// the app's public origin, e.g. "https://app.example.com".
+func CSRF(secret []byte, origin string) gin.HandlerFunc {
+	if len(secret) < 32 {
+		panic("middleware.CSRF: secret must be at least 32 bytes")
+	}
+	return func(c *gin.Context) {
+		want := tokenFor(secret, binding(c))
+		// The renderer reads the token from the writer (embed.md, Step 4).
+		c.Writer = &csrfWriter{ResponseWriter: c.Writer, token: want}
 
-    // Only check on state-changing methods
-    if method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE" {
-      token := c.GetHeader("X-CSRF-Token")
-      if token == "" {
-        token = c.PostForm("csrf_token")
-      }
+		switch c.Request.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			c.Next()
+			return
+		}
 
-      if !validateCSRFToken(token) {
-        c.AbortWithStatusJSON(403, gin.H{
-          "error": errors.CodeForbidden,
-          "message": "Invalid CSRF token",
-        })
-        return
-      }
-
-      // Consume the token (single use)
-      consumeCSRFToken(token)
-    }
-
-    c.Next()
-  }
+		got := c.GetHeader(csrfHeader)
+		if got == "" {
+			got = c.PostForm(csrfField)
+		}
+		if !sameOrigin(c.Request, origin) ||
+			subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+		c.Next()
+	}
 }
 
-// GenerateCSRFToken creates a new CSRF token
-func GenerateCSRFToken() string {
-  b := make([]byte, 32)
-  rand.Read(b)
-  token := base64.RawURLEncoding.EncodeToString(b)
-
-  csrfMu.Lock()
-  csrfTokens[token] = true
-  csrfMu.Unlock()
-
-  return token
+// binding is the value the token is derived from: the session cookie once
+// the user is signed in, otherwise a random cookie issued here.
+func binding(c *gin.Context) string {
+	if v, err := c.Cookie(sessionCookie); err == nil && v != "" {
+		return v
+	}
+	if v, err := c.Cookie(anonCookie); err == nil && v != "" {
+		return v
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // crypto/rand does not fail on supported platforms
+	}
+	v := base64.RawURLEncoding.EncodeToString(b)
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name: anonCookie, Value: v, Path: "/",
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+	})
+	return v
 }
 
-func validateCSRFToken(token string) bool {
-  if token == "" {
-    return false
-  }
-
-  csrfMu.RLock()
-  valid := csrfTokens[token]
-  csrfMu.RUnlock()
-
-  return valid
+// tokenFor derives the token from the binding. Nothing is stored: the same
+// session always yields the same token, and a new session a new one.
+func tokenFor(secret []byte, binding string) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte("csrf:" + binding))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func consumeCSRFToken(token string) {
-  csrfMu.Lock()
-  delete(csrfTokens, token)
-  csrfMu.Unlock()
+// sameOrigin rejects a request whose Origin, or failing that Referer, names
+// another site. A request carrying neither still has to present the token.
+func sameOrigin(r *http.Request, origin string) bool {
+	if o := r.Header.Get("Origin"); o != "" {
+		return o == origin
+	}
+	if ref := r.Header.Get("Referer"); ref != "" {
+		u, err := url.Parse(ref)
+		return err == nil && u.Scheme+"://"+u.Host == origin
+	}
+	return true
 }
+
+type csrfWriter struct {
+	gin.ResponseWriter
+	token string
+}
+
+func (w *csrfWriter) CSRFToken() string { return w.token }
+
+// Unwrap exposes the writer underneath, so other wrappers (profiling,
+// deployment.md) can still be found.
+func (w *csrfWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 ```
+
+Nothing is stored server-side: the token is recomputed from the session cookie
+on each request. Before login the binding is a random `__Host-csrf` cookie, so
+the login form is protected too. The `__Host-` prefix makes the browser refuse
+the cookie unless it is `Secure`, host-only and `Path=/`, which stops a sibling
+subdomain from planting one.
+
+Install it on the HTML router, after the static route and before every page
+route ([embed.md](../embed.md#router-setup)). An API authenticated by an
+`Authorization` header rather than a cookie is not exposed to CSRF and does not
+need it. Set `CSRF_SECRET` to at least 32 random bytes and `APP_URL` to the
+exact public origin, scheme included; the middleware panics at startup on a
+short secret rather than running without protection.
 
 ### Template Helper
 
-```go
-// In router setup
-router.SetFuncMap(template.FuncMap{
-  "csrf": func() string {
-    return middleware.GenerateCSRFToken()
-  },
-})
-```
+`{{ csrf }}` is registered in the template FuncMap
+([embed.md](../embed.md#step-2-add-template-functions-optional)) and bound to
+the request's token on every render. Gin hands the renderer the response
+writer but not the `*gin.Context`, which is why the middleware attaches the
+token to the writer. A template rendered on a route without the middleware
+fails with an error rather than emitting an empty token.
 
 ### Template Usage
 
 ```html
-<!-- In forms -->
-<form method="POST" action="/tasks/create">
+<!-- Plain forms: a hidden field, so they work without JavaScript -->
+<form method="POST" action="/settings">
   <input type="hidden" name="csrf_token" value="{{ csrf }}">
-  <input type="text" name="title">
-  <button type="submit">Create</button>
+  <label for="title" class="label">{{ t .lang "tasks.title" }}</label>
+  <input type="text" id="title" name="title" class="input mt-1">
+  <button type="submit" class="btn-primary">{{ t .lang "tasks.create" }}</button>
 </form>
 
-<!-- With HTMX -->
-<button
-  hx-post="/tasks/create"
-  hx-headers='{"X-CSRF-Token": "{{ csrf }}"}'
-  hx-vals='{"title": "My Task"}'>
-  Create Task
-</button>
+<!-- HTMX: once, on <body>, in the layout. Every request inherits it. -->
+<body hx-headers='{"X-CSRF-Token": "{{ csrf }}"}'>
 ```
 
-### Production Note
+Do not repeat `hx-headers` on individual elements; the one on `<body>` covers
+them.
 
-For production, use a battle-tested library:
-- [`github.com/gorilla/csrf`](https://github.com/gorilla/csrf)
+### Library Alternatives
+
+- Go 1.25+ ships `http.CrossOriginProtection` in `net/http`, which rejects
+  cross-origin state-changing requests using `Sec-Fetch-Site` and `Origin`.
+  It can replace `sameOrigin` above; keep the token as well, for browsers that
+  send neither header.
+- [`github.com/gorilla/csrf`](https://github.com/gorilla/csrf) implements the
+  same per-session pattern with masked tokens. It exposes the token through
+  `csrf.Token(r)`, which needs the request, so wire it to `{{ csrf }}` the same
+  way: through the response writer.
 
 ---
 
@@ -489,7 +568,8 @@ c.HTML(200, "page.html", gin.H{
 
 ### Content Security Policy
 
-See [Content Security Policy](#content-security-policy) section below.
+See [Content Security Policy](#content-security-policy) below. With no inline
+script allowed, an injection that slips past escaping still cannot run.
 
 ---
 
@@ -601,8 +681,8 @@ func SecurityHeaders() gin.HandlerFunc {
     // Prevent MIME sniffing
     c.Header("X-Content-Type-Options", "nosniff")
 
-    // Enable XSS filter (legacy browsers)
-    c.Header("X-XSS-Protection", "1; mode=block")
+    // No X-XSS-Protection: modern browsers removed the filter it controlled,
+    // and in old ones it could be abused to leak data. The CSP replaces it.
 
     // Force HTTPS
     c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
@@ -624,40 +704,54 @@ router.Use(SecurityHeaders())
 
 ## Content Security Policy
 
-### Basic CSP
+### The Policy
+
+```
+default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+```
 
 ```go
-func SecurityHeaders() gin.HandlerFunc {
-  return func(c *gin.Context) {
-    // Content Security Policy
-    csp := "default-src 'self'; " +
-      "script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; " +
-      "style-src 'self' https://cdn.jsdelivr.net; " +
-      "img-src 'self' data: https:; " +
-      "font-src 'self' data:; " +
-      "connect-src 'self'; " +
-      "frame-ancestors 'none'; " +
-      "base-uri 'self'; " +
-      "form-action 'self'"
+// contentSecurityPolicy is sent on every response: router.Use(ContentSecurityPolicy()).
+const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; " +
+  "img-src 'self' data:; font-src 'self'; connect-src 'self'; " +
+  "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
-    c.Header("Content-Security-Policy", csp)
+func ContentSecurityPolicy() gin.HandlerFunc {
+  return func(c *gin.Context) {
+    c.Header("Content-Security-Policy", contentSecurityPolicy)
     c.Next()
   }
 }
 ```
 
-### CSP for HTMX
+Nothing is loosened: no `'unsafe-inline'`, no `'unsafe-eval'`, no CDN origins.
+It holds because of how the frontend is built
+([frontend.md](../frontend.md#alpinejs-and-the-csp)):
 
-```go
-// Allow inline event handlers (HTMX uses them)
-csp := "default-src 'self'; " +
-  "script-src 'self' 'unsafe-inline' https://unpkg.com; " +
-  "style-src 'self' https://cdn.jsdelivr.net; " +
-  "img-src 'self' data: https:; " +
-  "connect-src 'self'"
-```
+- **Everything is vendored** under `/static`, so `'self'` covers every script,
+  stylesheet and font.
+- **Alpine is the CSP build** (`@alpinejs/csp`), which never compiles strings
+  into functions, so no `'unsafe-eval'`.
+- **No inline code in templates**: no `<script>` blocks, no `<style>` blocks,
+  no `style="…"`, no `onclick=` or other `on*` attributes. Page behaviour lives
+  in `static/js/app.js`. A Go test enforces it.
 
-**Note:** `'unsafe-inline'` is required for HTMX. Use nonces for better security in production.
+### HTMX Under This Policy
+
+HTMX does not need `'unsafe-inline'`. It runs under this policy when:
+
+- **Its indicator styles are off.** By default HTMX injects a `<style>` element
+  for `.htmx-indicator`, which `style-src 'self'` blocks. The layout's
+  `htmx-config` meta sets `"includeIndicatorStyles": false`, and the indicator
+  rules come from the compiled stylesheet instead.
+- **Eval is off.** `"allowEval": false` in the same meta disables the features
+  that evaluate strings (`hx-on`, `js:` values in `hx-vals`, event filters), so
+  a stray one fails visibly rather than prompting a weaker policy.
+- **No `hx-on` and no inline handlers.** Behaviour tied to an HTMX event lives
+  in an Alpine component or in `app.js`, or is raised by the server with
+  `HX-Trigger`.
+
+The configuration and the reasons are in [htmx.md](../htmx.md#configuration).
 
 ---
 

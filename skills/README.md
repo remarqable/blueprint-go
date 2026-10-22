@@ -30,7 +30,9 @@ That symlinks each skill into `.claude/skills/`, making it invocable as
 `/blueprint-go-audit`. Symlinks, not copies — the skill tracks the submodule, so
 a `git submodule update` picks up changes with no reinstall. The target links
 from every blueprint submodule it finds, so a repo carrying both the Go and
-Python blueprints gets both audits.
+Python blueprints gets both audits. Keep `.claude/skills/` in the project
+`.gitignore` (the target adds it when the file exists); the symlinks are local
+and point at a path that varies per checkout.
 
 If your project has no `make skills` target yet, copy it from the
 [Makefile in claude.md](../claude.md#makefile).
@@ -45,6 +47,8 @@ nothing in production. `gofmt`, `go vet` and `go test` cannot see any of it.
 
 The audit is what does, and it is run by a **separate agent** that never saw the
 plan, because the agent that wrote the code can justify every shortcut it took.
+
+Skip the audit and the blueprint degrades into style suggestions.
 
 ## Adding a skill
 

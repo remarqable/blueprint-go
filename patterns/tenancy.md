@@ -152,14 +152,22 @@ ALTER TABLE post ENABLE ROW LEVEL SECURITY;
 ALTER TABLE post FORCE  ROW LEVEL SECURITY;
 
 CREATE POLICY tenant_isolation ON post
-  USING      (tenant_id = current_setting('app.tenant_id', true)::BIGINT)
-  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::BIGINT);
+  USING      (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::BIGINT)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::BIGINT);
 ```
 
 The second argument to `current_setting` is `missing_ok`. Without it, an unset
 variable raises `unrecognized configuration parameter` and the query errors.
 With it, an unset variable returns NULL, `tenant_id = NULL` is NULL, and the
 policy matches nothing.
+
+`NULLIF(..., '')` is not decoration. Once any transaction on a pooled connection
+has run `set_config('app.tenant_id', ..., true)`, the variable stays defined on
+that connection after the transaction ends, with the value `''`. The next
+transaction that forgets to set it reads `''`, and `''::BIGINT` raises
+`invalid input syntax for type bigint` instead of matching nothing. Whether that
+happens depends on which connection the pool hands out, so it shows up as an
+intermittent error rather than in tests.
 
 **Unset means zero rows, never all rows.** That is the behaviour you want: a
 code path that forgets to set the tenant returns empty results rather than
@@ -441,7 +449,7 @@ Per table:
 - [ ] `ENABLE ROW LEVEL SECURITY`
 - [ ] `FORCE ROW LEVEL SECURITY`
 - [ ] Policy has both `USING` and `WITH CHECK`
-- [ ] `current_setting('app.tenant_id', true)` — with `missing_ok`
+- [ ] `NULLIF(current_setting('app.tenant_id', true), '')` — with `missing_ok`, and `NULLIF` for pooled connections
 - [ ] Listed in `isTenantScoped` if SQLite is supported
 
 Per application:

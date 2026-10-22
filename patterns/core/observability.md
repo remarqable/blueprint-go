@@ -76,7 +76,7 @@ Users paste it into support tickets and you skip the reconstruction entirely.
 ## Logging
 
 Structured, JSON in production, one event per line. The blueprint uses `zerolog`
-(see [claude.md § Logging](../claude.md#logging)).
+(see [claude.md § Logging](../../claude.md#logging)).
 
 ```go
 log := obs.From(ctx)   // carries trace_id, tenant_id, user_id automatically
@@ -193,7 +193,7 @@ Track it two ways, deliberately:
 
 - **Metrics** for aggregate rate and alerting, labelled by `model` and `purpose`
   only.
-- **The `ai_call` table** ([ai.md](ai.md#cost-accounting)) for per-tenant
+- **The `ai_call` table** ([ai.md](../ai.md#cost-accounting)) for per-tenant
   attribution, which is unbounded and therefore not a metric.
 
 The number that decides whether the business works is **cost per active user per

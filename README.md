@@ -95,15 +95,16 @@ Detailed architecture and coding standards in `patterns/`:
 
 **Core — applies to every project:**
 
-- **[mvc.md](patterns/mvc.md)** - Models (fat), Views (templates), Controllers (thin)
-- **[database.md](patterns/database.md)** - Migrations, JSONB, full-text search, indexes
-- **[data-modeling.md](patterns/data-modeling.md)** - Evidence vs derivation, temporal data, graph shapes
-- **[auth.md](patterns/auth.md)** - Magic links, sessions, OAuth
-- **[security.md](patterns/security.md)** - CSRF, rate limiting, input validation
-- **[testing.md](patterns/testing.md)** - Unit, integration, HTTP tests
-- **[observability.md](patterns/observability.md)** - Correlation IDs, structured logs, metrics, alerting
-- **[i18n.md](patterns/i18n.md)** - Multi-language support with JSON catalogs
-- **[deployment.md](patterns/deployment.md)** - Docker, production checklist
+- **[mvc.md](patterns/core/mvc.md)** - Models (fat), Views (templates), Controllers (thin)
+- **[database.md](patterns/core/database.md)** - Migrations, JSONB, full-text search, indexes
+- **[data-modeling.md](patterns/core/data-modeling.md)** - Evidence vs derivation, temporal data, graph shapes
+- **[auth.md](patterns/core/auth.md)** - Magic links, sessions, OAuth
+- **[security.md](patterns/core/security.md)** - CSRF, rate limiting, input validation
+- **[testing.md](patterns/core/testing.md)** - Unit, integration, HTTP tests
+- **[observability.md](patterns/core/observability.md)** - Correlation IDs, structured logs, metrics, alerting
+- **[i18n.md](patterns/core/i18n.md)** - Multi-language support with JSON catalogs
+- **[deployment.md](patterns/core/deployment.md)** - systemd + Caddy or Docker, the "be right back" page, request profiling, production checklist
+- **[audit.md](patterns/core/audit.md)** - Record audit: `created_by_user_id` / `updated_by_user_id`
 
 **Layers — read only when the project needs them:**
 
@@ -111,8 +112,9 @@ Detailed architecture and coding standards in `patterns/`:
 - **[jobs.md](patterns/jobs.md)** - Durable Postgres queue, retries, idempotency, workers
 - **[realtime.md](patterns/realtime.md)** - WebSocket/SSE, fanout, ordering, reconnect-and-resume
 - **[ai.md](patterns/ai.md)** - LLM providers, structured output, provenance, cost control, evals
-- **[frontend.md](patterns/frontend.md)** - Bootstrap 5 UI, responsive design
+- **[frontend.md](patterns/frontend.md)** - Tailwind CSS v4 + Alpine.js (CSP build), component layer, visual rules, accessibility, RTL
 - **[htmx.md](patterns/htmx.md)** - Interactive patterns (inline edit, delete, modals)
+- **[mobile-navigation.md](patterns/mobile-navigation.md)** - Responsive navigation, bottom tabs, mobile templates
 - **[embed.md](patterns/embed.md)** - Single-binary asset embedding
 - **[scale.md](patterns/scale.md)** - Cursor pagination, partitioning, pooling, caching
 
@@ -187,8 +189,8 @@ internal link and heading anchor, and runs in CI.
 
 - Fat models, thin controllers
 - Server-rendered HTML (no SPA complexity)
-- HTMX for rich interactivity without JavaScript
-- Bootstrap for professional UI
+- HTMX for server interaction, Alpine.js for behaviour
+- Tailwind CSS v4 with a thin component layer
 - Progressive enhancement (works without JavaScript)
 
 ---
@@ -199,8 +201,8 @@ internal link and heading anchor, and runs in CI.
 
 - **Go 1.23+** with Gin web framework
 - **PostgreSQL 15+** with goose migrations
-- **HTMX 1.9+** for rich interactivity
-- **Bootstrap 5.3+** for responsive UI
+- **HTMX 2** for server interaction
+- **Tailwind CSS v4** (standalone binary, no npm) and **Alpine.js** (CSP build)
 - **GORM** over PostgreSQL or SQLite, with SQL migrations in goose
 - **html/template** for secure server-rendered views
 - **zerolog** for structured logging
@@ -240,8 +242,8 @@ See [patterns/tenancy.md](patterns/tenancy.md) for the full guide.
 
 - **Fat models, thin controllers** - Business logic lives with data
 - **GORM for reads and writes, SQL for schema** - migrations are goose SQL you can read, so the schema is never inferred from struct tags
-- **No build step** - Bootstrap + HTMX work out of the box
-- **No custom CSS** - Bootstrap utilities cover 95% of use cases
+- **No npm** - Tailwind is a standalone binary; `make css` builds the stylesheet and the output is committed
+- **Utilities first** - Tailwind utilities in the markup, a thin component layer for what repeats
 - **Progressive enhancement** - Works without JavaScript
 
 ---

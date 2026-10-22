@@ -1,844 +1,728 @@
-# HTMX Patterns Reference
+# HTMX Patterns
 
-> Complete guide to using HTMX for interactive server-rendered web applications
+> Server-rendered interactivity: Gin handlers return HTML fragments, HTMX swaps
+> them in, Alpine handles what never needs the server.
 
-> **Universal Examples**: This guide uses **Setting** and **Notification** models to demonstrate HTMX patterns. These examples show common SaaS interaction patterns and apply to any domain model.
+Read [frontend.md](frontend.md) first: the layout, component classes, Alpine
+components and CSP referred to here are defined there. Examples use a
+**Setting** and a **Notification** model; the patterns apply to any model.
 
 ---
 
 ## Table of Contents
 
 - [Philosophy](#philosophy)
+- [Configuration](#configuration)
+- [Core Concepts](#core-concepts)
 - [Template Structure](#template-structure)
 - [Controller Patterns](#controller-patterns)
 - [Response Headers](#response-headers)
+- [Toast Notifications](#toast-notifications)
 - [Common UI Patterns](#common-ui-patterns)
+- [Loading States](#loading-states)
 - [Error Handling](#error-handling)
-- [Real-World Examples](#real-world-examples)
 - [Best Practices](#best-practices)
 
 ---
 
 ## Philosophy
 
-**HTMX enables rich interactivity without writing JavaScript** by extending HTML with attributes.
+- The server returns HTML, not JSON. Links and forms drive state.
+- Progressive enhancement: every form has a real `method` and `action`, so it
+  still works when JavaScript does not load.
+- No client-side routing and no client-side copy of server state.
+- **HTMX talks to the server; Alpine handles the rest.** A dropdown opening is
+  Alpine. Saving the setting chosen in it is HTMX. Neither reaches into the
+  other's job.
 
-### Core Principles
+**Good for:** forms, inline editing, search and filter, pagination and
+infinite scroll, settings, notifications.
 
-1. **Hypermedia as the engine of application state** (HATEOAS)
-2. **Server renders HTML**, not JSON
-3. **Progressive enhancement** (works without JS)
-4. **Partial page updates** (no full page reloads)
-5. **Simple, declarative** (attributes, not code)
+**Not for:** real-time collaboration ([realtime.md](realtime.md) when
+`realtime: true`), complex drag-and-drop, offline-first apps.
 
-### Why HTMX
+---
 
-- No build step (just include htmx.min.js)
-- No JavaScript framework complexity
-- Server-rendered templates (security, SEO)
-- Works with any backend (Go, Python, Ruby, etc.)
-- Small payload (~14 KB gzipped)
+## Configuration
+
+The base layout configures HTMX with one meta tag
+([frontend.md](frontend.md#base-layout)):
+
+```html
+<meta name="htmx-config"
+      content='{"includeIndicatorStyles":false,"allowEval":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+```
+
+| Setting | Why |
+|---------|-----|
+| `includeIndicatorStyles: false` | HTMX otherwise injects a `<style>` block, which `style-src 'self'` blocks. The indicator rules live in `input.css` instead ([Loading States](#loading-states)). |
+| `allowEval: false` | The CSP has no `'unsafe-eval'`, so anything HTMX would evaluate fails anyway. Turning it off makes that explicit. |
+| `responseHandling` | Adds `422` as a swapping status for validation errors. See [Error Handling](#error-handling). |
+
+HTMX merges this object shallowly, so `responseHandling` replaces the default
+list entirely; all four entries are needed. Entries match in order.
+
+`allowEval: false` rules out, in any template:
+
+- `hx-on:*` attributes — use an Alpine component or an `HX-Trigger` event.
+- `js:` or `javascript:` values in `hx-vals`, and `hx-vars`.
+- Trigger filters such as `hx-trigger="keyup[key=='Enter']"`. Use a modifier
+  (`keyup changed delay:300ms`) or a form submit instead.
+
+The test in [frontend.md](frontend.md#testing-the-rules) rejects `hx-on`.
+
+---
+
+## Core Concepts
+
+| Attribute | Purpose | Example |
+|-----------|---------|---------|
+| `hx-get` / `hx-post` | Request | `hx-post="/settings"` |
+| `hx-put` / `hx-patch` / `hx-delete` | Request | `hx-delete="/settings/theme"` |
+| `hx-trigger` | Event that fires it | `hx-trigger="change"` |
+| `hx-target` | Where the response goes | `hx-target="#result"` |
+| `hx-swap` | How it goes in | `hx-swap="outerHTML"` |
+| `hx-include` | Extra inputs to send | `hx-include="#filters"` |
+| `hx-confirm` | Native confirm first | `hx-confirm="{{ t .lang "settings.delete_confirm" }}"` |
+| `hx-indicator` | Element shown while in flight | `hx-indicator="#spinner"` |
+| `hx-disabled-elt` | Element disabled while in flight | `hx-disabled-elt="find button"` |
+
+| Swap | Effect |
+|------|--------|
+| `innerHTML` | Replace the target's children (default) |
+| `outerHTML` | Replace the target itself |
+| `beforeend` / `afterbegin` | Append / prepend inside the target |
+| `delete` | Remove the target |
+| `none` | Swap nothing; headers still apply |
+
+**Prefer inputs over `hx-vals` for values from Go.** `hx-vals='{"key": "{{ .Key }}"}'`
+puts a template value inside a JSON string inside an HTML attribute;
+`html/template` escapes it for HTML, not for JSON, so a quote in the value
+breaks the JSON. A hidden `<input>` inside the form, or `hx-include`, has no
+such seam.
 
 ---
 
 ## Template Structure
 
-### File Organization
+### File organization
 
 ```
-views/
+internal/assets/views/
 ├── layouts/
-│   ├── base.html          # master layout with <head>, navbar, footer
-│   └── minimal.html       # Auth pages, no navbar
+│   └── base.html                 # frontend.md
 ├── partials/
-│   ├── _navbar.html       # Shared navbar
-│   ├── _toast.html        # Toast notifications
-│   └── _form_errors.html  # Form validation errors
+│   ├── _navbar.html
+│   ├── _flash.html
+│   ├── _toasts.html
+│   └── _modal.html
 ├── settings/
-│   ├── index.html         # Full page view
-│   ├── form.html          # Settings form
-│   └── _setting_row.html  # HTMX partial (prefixed with _)
-├── notifications/
-│   ├── list.html          # Full page view
-│   └── _notification_row.html  # HTMX partial
-└── users/
-    └── profile.html
+│   ├── index.html                # full page
+│   └── _setting_row.html         # HTMX partial
+└── notifications/
+    ├── list.html                 # full page
+    ├── _list.html                # HTMX partial: the list alone
+    ├── _row.html                 # HTMX partial: one row
+    └── _form.html                # HTMX partial: modal body
 ```
 
-### Naming Convention
+- **Full pages** extend the layout.
+- **Partials** are prefixed `_` and render alone — they are what HTMX swaps.
+- A full page includes its partials, so the first render and every later swap
+  produce the same markup from the same file.
 
-- **Full pages**: `index.html`, `form.html`, `list.html`
-- **Partials**: `_partial_name.html` (underscore prefix)
-- **Layouts**: `base.html`, `minimal.html`
+### Partials that need page data
 
-### Base Layout
+`{{ template }}` passes one value. A row partial needs both its row and `.lang`,
+so register a `dict` helper beside `t` in the FuncMap
+([embed.md](embed.md#step-2-add-template-functions-optional)):
 
-```html
-<!-- views/layouts/base.html -->
-<!DOCTYPE html>
-<html lang="{{ .lang }}">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ block "title" . }}{{ .appName }}{{ end }}</title>
+```go
+// internal/assets/funcs.go
+package assets
 
-  <!-- Bootstrap CSS -->
-  <link href="/static/css/bootstrap.min.css" rel="stylesheet">
-  <link href="/static/css/app.css" rel="stylesheet">
+import "fmt"
 
-  <!-- HTMX -->
-  <script src="/static/js/htmx.min.js"></script>
-
-  {{ block "head" . }}{{ end }}
-</head>
-<body>
-  {{ template "_navbar.html" . }}
-
-  <!-- Toast container for notifications -->
-  <div id="toast-container" class="position-fixed top-0 end-0 p-3" style="z-index: 11"></div>
-
-  <!-- master content -->
-  <main class="container py-4">
-    {{ block "content" . }}{{ end }}
-  </main>
-
-  <!-- Footer -->
-  <footer class="mt-auto py-3 bg-white border-top">
-    <div class="container text-center text-muted">
-      <small>&copy; 2024 {{ .appName }}</small>
-    </div>
-  </footer>
-
-  {{ block "scripts" . }}{{ end }}
-</body>
-</html>
+// dict builds a map from key/value pairs so a partial can receive more than
+// one value: {{ template "x.html" (dict "lang" $.lang "setting" .) }}.
+func dict(kv ...any) (map[string]any, error) {
+	if len(kv)%2 != 0 {
+		return nil, fmt.Errorf("dict: odd number of arguments")
+	}
+	m := make(map[string]any, len(kv)/2)
+	for i := 0; i < len(kv); i += 2 {
+		k, ok := kv[i].(string)
+		if !ok {
+			return nil, fmt.Errorf("dict: key %v is not a string", kv[i])
+		}
+		m[k] = kv[i+1]
+	}
+	return m, nil
+}
 ```
 
-### Full Page View
+### Full page
 
 ```html
-<!-- views/settings/index.html -->
-{{ define "title" }}Settings{{ end }}
+<!-- internal/assets/views/settings/index.html -->
+{{ define "title" }}{{ t .lang "settings.title" }}{{ end }}
 
 {{ define "content" }}
-<div class="d-flex justify-content-between align-items-center mb-4">
-  <h1>{{ t .lang "settings.title" }}</h1>
-</div>
+<h1 class="mb-8 text-2xl font-semibold">{{ t .lang "settings.title" }}</h1>
 
-<!-- Settings form (HTMX will update individual rows) -->
-<div id="settings-list" class="card">
-  <div class="card-body">
-    {{ range .settings }}
-      {{ template "settings/_setting_row.html" . }}
-    {{ else }}
-      <p class="text-muted">{{ t .lang "settings.empty" }}</p>
-    {{ end }}
-  </div>
+<div id="settings-list" class="card divide-y divide-slate-200 dark:divide-slate-700">
+  {{ range .settings }}
+    {{ template "settings/_setting_row.html" (dict "lang" $.lang "setting" .) }}
+  {{ else }}
+    <p class="text-sm text-slate-600">{{ t .lang "settings.empty" }}</p>
+  {{ end }}
 </div>
 {{ end }}
 ```
 
-### Partial (HTMX target)
+### Partial (the HTMX target)
 
 ```html
-<!-- views/settings/_setting_row.html -->
-<div class="row mb-3 align-items-center" id="setting-{{ .Key }}">
-  <div class="col-md-4">
-    <label class="form-label fw-semibold">{{ .Key | title }}</label>
-    <small class="d-block text-muted">{{ t .lang (printf "settings.%s.description" .Key) }}</small>
-  </div>
-  <div class="col-md-6">
-    {{ if eq .Key "theme" }}
-      <!-- Theme dropdown -->
-      <select
-        name="value"
-        class="form-select"
-        hx-post="/settings"
-        hx-vals='{"key": "theme"}'
-        hx-target="#setting-theme"
-        hx-swap="outerHTML">
-        <option value="light" {{ if eq .Value "light" }}selected{{ end }}>Light</option>
-        <option value="dark" {{ if eq .Value "dark" }}selected{{ end }}>Dark</option>
-        <option value="auto" {{ if eq .Value "auto" }}selected{{ end }}>Auto</option>
-      </select>
-    {{ else if eq .Key "notifications" }}
-      <!-- Boolean toggle -->
-      <div class="form-check form-switch">
-        <input
-          type="checkbox"
-          class="form-check-input"
-          {{ if eq .Value "true" }}checked{{ end }}
-          hx-post="/settings"
-          hx-vals='{"key": "notifications", "value": "{{ if eq .Value "true" }}false{{ else }}true{{ end }}"}'
-          hx-target="#setting-notifications"
-          hx-swap="outerHTML">
-      </div>
+<!-- internal/assets/views/settings/_setting_row.html -->
+<form id="setting-{{ .setting.Key }}" method="POST" action="/settings"
+      hx-post="/settings" hx-trigger="change" hx-target="this" hx-swap="outerHTML"
+      class="grid gap-2 py-4 md:grid-cols-3 md:items-center">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <input type="hidden" name="key" value="{{ .setting.Key }}">
+
+  <label for="setting-{{ .setting.Key }}-value" class="label">
+    {{ t .lang (printf "settings.%s.label" .setting.Key) }}
+  </label>
+
+  <div class="md:col-span-2">
+    {{ if eq .setting.Key "theme" }}
+    <select id="setting-{{ .setting.Key }}-value" name="value" class="select">
+      <option value="light" {{ if eq .setting.Value "light" }}selected{{ end }}>{{ t .lang "settings.theme.light" }}</option>
+      <option value="dark" {{ if eq .setting.Value "dark" }}selected{{ end }}>{{ t .lang "settings.theme.dark" }}</option>
+    </select>
     {{ else }}
-      <!-- Text input with inline edit -->
-      <input
-        type="text"
-        name="value"
-        value="{{ .Value }}"
-        class="form-control"
-        hx-post="/settings"
-        hx-vals='{"key": "{{ .Key }}"}'
-        hx-trigger="blur changed"
-        hx-target="#setting-{{ .Key }}"
-        hx-swap="outerHTML">
+    <input id="setting-{{ .setting.Key }}-value" type="text" name="value"
+           value="{{ .setting.Value }}" class="input"
+           {{ with .errors.value }}aria-invalid="true" aria-describedby="setting-{{ $.setting.Key }}-error"{{ end }}>
+    {{ end }}
+    {{ with .errors.value }}
+    <p id="setting-{{ $.setting.Key }}-error" class="form-error">{{ t $.lang . }}</p>
     {{ end }}
   </div>
-  <div class="col-md-2">
-    <!-- Delete setting -->
-    <button
-      hx-delete="/settings/{{ .Key }}"
-      hx-confirm="{{ t .lang "settings.delete.confirm" }}"
-      hx-target="#setting-{{ .Key }}"
-      hx-swap="outerHTML swap:1s"
-      class="btn btn-sm btn-outline-danger">
-      Delete
-    </button>
-  </div>
-</div>
+</form>
 ```
+
+`change` bubbles from the input to the form, so the form is the trigger and its
+own target. The hidden `csrf_token` keeps the plain POST working without
+JavaScript; HTMX requests also carry the header set on `<body>`.
 
 ---
 
 ## Controller Patterns
 
-### Detect HTMX Requests
+### Helpers
 
 ```go
+// internal/controllers/htmx.go
+package controllers
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
+
+	"github.com/gin-gonic/gin"
+)
+
 func isHTMX(c *gin.Context) bool {
-  return c.GetHeader("HX-Request") == "true"
+	return c.GetHeader("HX-Request") == "true"
+}
+
+// render serves the partial to HTMX and the full page to everyone else.
+// Vary keeps a cache from handing one to the other.
+func render(c *gin.Context, status int, page, partial string, data gin.H) {
+	c.Writer.Header().Add("Vary", "HX-Request")
+	if isHTMX(c) {
+		c.HTML(status, partial, data)
+		return
+	}
+	c.HTML(status, page, data)
+}
+
+// trigger sets HX-Trigger to the given events. Call it once per response:
+// a second call replaces the first.
+func trigger(c *gin.Context, events map[string]any) {
+	b, err := json.Marshal(events)
+	if err != nil {
+		return // events are built here from strings and maps; this cannot fail
+	}
+	c.Header("HX-Trigger", asciiJSON(b))
+}
+
+// toast raises the client-side toast. message is already translated.
+func toast(c *gin.Context, level, message string) {
+	trigger(c, map[string]any{"toast": map[string]string{"level": level, "message": message}})
+}
+
+// asciiJSON escapes every non-ASCII rune as \uXXXX. Browsers decode response
+// headers as Latin-1, so a translated "Paramètres enregistrés" sent as raw
+// UTF-8 arrives as "ParamÃ¨tres enregistrÃ©s". Non-ASCII only occurs inside
+// JSON strings, so escaping it is always valid JSON.
+func asciiJSON(b []byte) string {
+	var sb strings.Builder
+	for _, r := range string(b) {
+		if r < utf8.RuneSelf {
+			sb.WriteRune(r)
+			continue
+		}
+		for _, u := range utf16.Encode([]rune{r}) {
+			fmt.Fprintf(&sb, `\u%04x`, u)
+		}
+	}
+	return sb.String()
 }
 ```
 
-### Pattern 1: Full Page or Partial
+### Full page or partial
 
 ```go
 func ListNotifications(c *gin.Context) {
-  userID := c.GetInt64("user_id")
+	lang := i18n.GetLang(c)
+	userID := c.GetInt64("user_id")
 
-  notifications, err := models.GetNotificationsByUser(c.Request.Context(), userID)
-  if err != nil {
-    handleError(c, err)
-    return
-  }
+	notifications, err := models.GetNotificationsByUser(c.Request.Context(), userID)
+	if err != nil {
+		renderError(c, err)
+		return
+	}
 
-  // HTMX request: return partial
-  if isHTMX(c) {
-    c.HTML(200, "notifications/_notification_list.html", gin.H{
-      "notifications": notifications,
-    })
-    return
-  }
-
-  // Regular request: return full page
-  c.HTML(200, "notifications/list.html", gin.H{
-    "notifications": notifications,
-  })
+	render(c, http.StatusOK, "notifications/list.html", "notifications/_list.html", gin.H{
+		"lang":          lang,
+		"notifications": notifications,
+	})
 }
 ```
 
-### Pattern 2: Create with Redirect or Partial
+### Update: re-render the row, or redirect
 
 ```go
 func UpdateSetting(c *gin.Context) {
-  userID := c.GetInt64("user_id")
+	lang := i18n.GetLang(c)
+	setting := models.Setting{
+		UserID: c.GetInt64("user_id"),
+		Key:    c.PostForm("key"),
+		Value:  c.PostForm("value"),
+	}
 
-  var setting models.Setting
-  setting.UserID = userID
-  setting.Key = c.PostForm("key")
-  setting.Value = c.PostForm("value")
+	// Validate returns field -> catalog key, e.g. {"value": "errors.setting.too_long"}.
+	if errs := setting.Validate(); len(errs) > 0 {
+		data := gin.H{"lang": lang, "setting": &setting, "errors": errs}
+		if isHTMX(c) {
+			c.HTML(http.StatusUnprocessableEntity, "settings/_setting_row.html", data)
+			return
+		}
+		c.HTML(http.StatusUnprocessableEntity, "settings/index.html", data)
+		return
+	}
 
-  if err := setting.Validate(); err != nil {
-    // Return error partial (HTMX or full page)
-    if isHTMX(c) {
-      c.HTML(400, "partials/_form_errors.html", gin.H{
-        "error": "Invalid input",
-      })
-      return
-    }
-    c.HTML(400, "settings/index.html", gin.H{
-      "error": "Invalid input",
-      "setting": setting,
-    })
-    return
-  }
+	if err := setting.Set(c.Request.Context()); err != nil {
+		renderError(c, err)
+		return
+	}
 
-  // Upsert setting (ON CONFLICT UPDATE)
-  if err := setting.Set(c.Request.Context()); err != nil {
-    handleError(c, err)
-    return
-  }
-
-  // HTMX request: return updated setting row
-  if isHTMX(c) {
-    c.HTML(200, "settings/_setting_row.html", gin.H{"Setting": &setting})
-    return
-  }
-
-  // Regular request: redirect to settings
-  c.Redirect(302, "/settings")
+	if isHTMX(c) {
+		toast(c, "success", i18n.T(lang, "settings.saved"))
+		c.HTML(http.StatusOK, "settings/_setting_row.html", gin.H{"lang": lang, "setting": &setting})
+		return
+	}
+	c.Redirect(http.StatusSeeOther, "/settings")
 }
 ```
 
-### Pattern 3: Update with Swap
+Validation failure is **422**, and the configuration above swaps 422, so the
+form comes back with its errors in place. Any other 4xx is not swapped —
+see [Error Handling](#error-handling).
 
-```go
-func MarkNotificationRead(c *gin.Context) {
-  notificationID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-  userID := c.GetInt64("user_id")
+The non-HTMX branch redirects with 303 so a browser refresh does not resubmit.
 
-  var notification models.Notification
-  if err := notification.GetByID(c.Request.Context(), notificationID, userID); err != nil {
-    handleError(c, err)
-    return
-  }
-
-  // Mark as read
-  notification.ReadAt = sql.NullTime{Time: time.Now(), Valid: true}
-  if err := notification.Update(c.Request.Context()); err != nil {
-    handleError(c, err)
-    return
-  }
-
-  // Return updated notification row (HTMX will swap it)
-  c.HTML(200, "notifications/_notification_row.html", gin.H{
-    "notification": notification,
-  })
-}
-```
-
-### Pattern 4: Delete with Empty Response
+### Delete: empty body, element removed
 
 ```go
 func DeleteSetting(c *gin.Context) {
-  key := c.Param("key")
-  userID := c.GetInt64("user_id")
-
-  setting := &models.Setting{
-    UserID: userID,
-    Key:    key,
-  }
-
-  if err := setting.Delete(c.Request.Context()); err != nil {
-    handleError(c, err)
-    return
-  }
-
-  // HTMX will remove the element (hx-swap="outerHTML")
-  c.Status(200)
+	setting := models.Setting{UserID: c.GetInt64("user_id"), Key: c.Param("key")}
+	if err := setting.Delete(c.Request.Context()); err != nil {
+		renderError(c, err)
+		return
+	}
+	toast(c, "success", i18n.T(i18n.GetLang(c), "settings.deleted"))
+	c.Status(http.StatusOK) // empty body + hx-swap="outerHTML" removes the target
 }
 ```
 
-### Helper Function
-
-```go
-func renderHTMX(c *gin.Context, status int, fullPage, partial string, data gin.H) {
-  if isHTMX(c) {
-    c.HTML(status, partial, data)
-  } else {
-    c.HTML(status, fullPage, data)
-  }
-}
-
-// Usage
-renderHTMX(c, 200, "notifications/list.html", "notifications/_notification_list.html", gin.H{
-  "notifications": notifications,
-})
-```
+Return 200, not 204: the configuration does not swap 204, so the row would stay.
 
 ---
 
 ## Response Headers
 
-### HX-Trigger (Client-side Events)
-
-Trigger JavaScript events on the client:
-
-```go
-// Trigger custom event
-c.Header("HX-Trigger", "settingUpdated")
-
-// Trigger with data (JSON)
-c.Header("HX-Trigger", `{"showToast": {"type": "success", "message": "Setting saved!"}}`)
-
-// Multiple events
-c.Header("HX-Trigger", `{"settingUpdated": {}, "refreshStats": {}}`)
-```
-
-JavaScript listener:
-
-```javascript
-document.body.addEventListener('showToast', (e) => {
-  const { type, message } = e.detail;
-  // Show toast notification
-  showToast(type, message);
-});
-```
-
-### HX-Redirect (Full Page Redirect)
+| Header | Effect | Example |
+|--------|--------|---------|
+| `HX-Trigger` | Dispatch client events when the response arrives | `{"toast": {…}}` |
+| `HX-Trigger-After-Swap` | Dispatch them after the swap | `open-modal` |
+| `HX-Redirect` | Full-page navigation | `/settings` |
+| `HX-Reswap` | Override `hx-swap` | `beforeend` |
+| `HX-Retarget` | Override `hx-target` | `#settings-list` |
+| `HX-Push-Url` | Update the address bar | `/notifications?filter=unread` |
 
 ```go
 c.Header("HX-Redirect", "/settings")
-c.Status(200)
+c.Status(http.StatusOK)
 ```
 
-### HX-Reswap (Override Swap Strategy)
+`HX-Trigger` is processed for every status, before HTMX decides whether to
+swap. That is what lets an unswapped error response still raise a toast.
+
+**One `HX-Trigger` per response.** `c.Header` replaces, so a second call drops
+the first event. Send several events as one JSON object through `trigger`
+below.
+
+---
+
+## Toast Notifications
+
+The `toasts` Alpine component and its partial live in
+[frontend.md](frontend.md#toasts-from-the-server). It listens for a `toast`
+window event; the server raises one with `HX-Trigger`.
+
+`toast` and `trigger` are in [the helpers](#helpers). The non-ASCII escaping
+is not optional once the catalog has a second language: browsers decode
+response headers as Latin-1, so an unescaped translated message arrives
+garbled.
 
 ```go
-c.Header("HX-Reswap", "innerHTML")  // Instead of outerHTML
-c.Header("HX-Reswap", "beforeend")  // Append to end
-c.Header("HX-Reswap", "afterbegin") // Prepend to beginning
+toast(c, "success", i18n.T(lang, "settings.saved"))
+// HX-Trigger: {"toast":{"level":"success","message":"Param\u00e8tres enregistr\u00e9s"}}
 ```
 
-### HX-Retarget (Override Target Element)
-
-```go
-c.Header("HX-Retarget", "#settings-list")
-c.Header("HX-Retarget", "body")
-```
-
-### HX-Push-Url (Update Browser URL)
-
-```go
-c.Header("HX-Push-Url", "/profile/settings")  // Update URL without reload
-c.Header("HX-Push-Url", "false")              // Don't update URL
-```
+Every toast message comes from the catalog, and follows the copy rules in
+[frontend.md](frontend.md#copy): the **Save changes** button produces a
+**Changes saved** toast.
 
 ---
 
 ## Common UI Patterns
 
-### 1. Inline Edit
+### Inline edit
 
 ```html
-<!-- View mode -->
-<div id="setting-timezone-{{ .ID }}" class="d-flex">
-  <span>{{ .Value }}</span>
-  <button
-    hx-get="/settings/timezone/edit"
-    hx-target="#setting-timezone-{{ .ID }}"
-    hx-swap="outerHTML"
-    class="btn btn-sm btn-link">
-    Edit
-  </button>
+<!-- internal/assets/views/profile/_name_display.html -->
+<div id="name" class="flex items-center gap-4">
+  <span>{{ .user.Name }}</span>
+  <button type="button" hx-get="/profile/name/edit" hx-target="#name" hx-swap="outerHTML"
+          class="text-sm text-brand-600 hover:underline">{{ t .lang "common.edit" }}</button>
 </div>
 ```
 
 ```html
-<!-- Edit mode (returned by GET /settings/timezone/edit) -->
-<form
-  id="setting-timezone-{{ .ID }}"
-  hx-post="/settings"
-  hx-vals='{"key": "timezone"}'
-  hx-target="#setting-timezone-{{ .ID }}"
-  hx-swap="outerHTML">
-  <select name="value" class="form-select" autofocus>
-    <option value="UTC" {{ if eq .Value "UTC" }}selected{{ end }}>UTC</option>
-    <option value="America/New_York" {{ if eq .Value "America/New_York" }}selected{{ end }}>Eastern</option>
-    <option value="America/Los_Angeles" {{ if eq .Value "America/Los_Angeles" }}selected{{ end }}>Pacific</option>
-  </select>
-  <button type="submit" class="btn btn-sm btn-primary">Save</button>
-  <button
-    type="button"
-    hx-get="/settings/timezone/view"
-    hx-target="#setting-timezone-{{ .ID }}"
-    hx-swap="outerHTML"
-    class="btn btn-sm btn-secondary">
-    Cancel
-  </button>
+<!-- internal/assets/views/profile/_name_form.html -->
+<form id="name" method="POST" action="/profile/name"
+      hx-post="/profile/name" hx-target="#name" hx-swap="outerHTML"
+      class="flex items-center gap-2">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label for="name-input" class="sr-only">{{ t .lang "user.name" }}</label>
+  <input id="name-input" type="text" name="name" value="{{ .user.Name }}" class="input" autofocus>
+  <button type="submit" class="btn-primary">{{ t .lang "common.save" }}</button>
+  <button type="button" hx-get="/profile/name" hx-target="#name" hx-swap="outerHTML"
+          class="btn-secondary">{{ t .lang "common.cancel" }}</button>
 </form>
 ```
 
-### 2. Infinite Scroll
+### Search with debounce
 
 ```html
-<div id="notification-list">
-  {{ range .notifications }}
-    {{ template "notifications/_notification_row.html" . }}
-  {{ end }}
+<label for="q" class="sr-only">{{ t .lang "notifications.search" }}</label>
+<input id="q" type="search" name="q" class="input"
+       placeholder="{{ t .lang "notifications.search_placeholder" }}"
+       hx-get="/notifications/search" hx-trigger="input changed delay:300ms, search"
+       hx-target="#search-results">
 
-  <!-- Load more trigger -->
-  {{ if .hasMore }}
-    <div
-      hx-get="/notifications?offset={{ .nextOffset }}"
-      hx-trigger="revealed"
-      hx-swap="outerHTML">
-      <p class="text-center">Loading more...</p>
-    </div>
-  {{ end }}
-</div>
+<div id="search-results" aria-live="polite"></div>
 ```
-
-### 3. Search with Debounce
-
-```html
-<input
-  type="search"
-  name="q"
-  placeholder="Search notifications..."
-  hx-get="/notifications/search"
-  hx-trigger="keyup changed delay:300ms"
-  hx-target="#search-results"
-  class="form-control">
-
-<div id="search-results"></div>
-```
-
-### 4. Form with Live Validation
-
-```html
-<form hx-post="/profile" hx-target="#profile-section">
-  <div class="mb-3">
-    <label for="email" class="form-label">Email</label>
-    <input
-      type="email"
-      id="email"
-      name="email"
-      class="form-control"
-      hx-post="/profile/validate-email"
-      hx-trigger="blur"
-      hx-target="#email-error"
-      required>
-    <div id="email-error" class="text-danger"></div>
-  </div>
-
-  <button type="submit" class="btn btn-primary">Update Profile</button>
-</form>
-```
-
-### 5. Modal with HTMX
-
-```html
-<!-- Button to open modal -->
-<button
-  hx-get="/notifications/new"
-  hx-target="#modal-content"
-  data-bs-toggle="modal"
-  data-bs-target="#notificationModal"
-  class="btn btn-primary">
-  Create Notification
-</button>
-
-<!-- Modal (Bootstrap) -->
-<div class="modal fade" id="notificationModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content" id="modal-content">
-      <!-- HTMX loads form here -->
-    </div>
-  </div>
-</div>
-```
-
-### 6. Dependent Dropdowns
-
-```html
-<!-- Country selector -->
-<select
-  name="country"
-  hx-get="/api/states"
-  hx-trigger="change"
-  hx-target="#state-select"
-  class="form-select">
-  <option value="">Select country</option>
-  <option value="US">United States</option>
-  <option value="CA">Canada</option>
-</select>
-
-<!-- State selector (populated by HTMX) -->
-<select id="state-select" name="state" class="form-select">
-  <option value="">Select state</option>
-</select>
-```
-
-### 7. Toast Notifications
-
-```html
-<!-- Toast partial (views/partials/_toast.html) -->
-<div class="toast align-items-center text-bg-{{ .type }} border-0" role="alert">
-  <div class="d-flex">
-    <div class="toast-body">{{ .message }}</div>
-    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-  </div>
-</div>
-```
-
-Controller:
 
 ```go
-func UpdateSetting(c *gin.Context) {
-  // ... update setting ...
-
-  // Trigger toast via HX-Trigger
-  c.Header("HX-Trigger", `{"showToast": {"type": "success", "message": "Setting saved!"}}`)
-  c.HTML(200, "settings/_setting_row.html", gin.H{"Setting": &setting})
+func SearchNotifications(c *gin.Context) {
+	lang := i18n.GetLang(c)
+	q := strings.TrimSpace(c.Query("q"))
+	if q == "" {
+		c.HTML(http.StatusOK, "notifications/_empty.html", gin.H{"lang": lang})
+		return
+	}
+	results, err := models.SearchNotifications(c.Request.Context(), c.GetInt64("user_id"), q)
+	if err != nil {
+		renderError(c, err)
+		return
+	}
+	c.HTML(http.StatusOK, "notifications/_list.html", gin.H{"lang": lang, "notifications": results})
 }
 ```
 
-JavaScript listener:
-
-```javascript
-document.body.addEventListener('showToast', (e) => {
-  const { type, message } = e.detail;
-  const container = document.getElementById('toast-container');
-
-  const toast = document.createElement('div');
-  toast.className = `toast align-items-center text-bg-${type} border-0`;
-  toast.setAttribute('role', 'alert');
-  toast.innerHTML = `
-    <div class="d-flex">
-      <div class="toast-body">${message}</div>
-      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-    </div>
-  `;
-
-  container.appendChild(toast);
-  const bsToast = new bootstrap.Toast(toast);
-  bsToast.show();
-});
-```
-
-### 8. Loading Indicators
+### Infinite scroll
 
 ```html
-<!-- Button with spinner -->
-<button
-  hx-post="/settings"
-  hx-vals='{"key": "theme", "value": "dark"}'
-  hx-target="#settings-list"
-  class="btn btn-primary">
-  Save Changes
-  <span class="spinner-border spinner-border-sm htmx-indicator" role="status"></span>
-</button>
+<!-- internal/assets/views/notifications/_list.html -->
+{{ range .notifications }}
+  {{ template "notifications/_row.html" (dict "lang" $.lang "notification" .) }}
+{{ end }}
+{{ if .nextCursor }}
+<div hx-get="/notifications?after={{ .nextCursor }}" hx-trigger="revealed"
+     hx-swap="outerHTML" class="flex justify-center py-4">
+  <span class="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+        aria-hidden="true"></span>
+  <span class="sr-only">{{ t .lang "common.loading" }}</span>
+</div>
+{{ end }}
+```
 
-<!-- CSS (auto-shows during HTMX request) -->
-<style>
-.htmx-indicator {
-  display: none;
+Cursor, not offset — see [scale.md](scale.md).
+
+### Delete with confirmation
+
+```html
+<!-- internal/assets/views/notifications/_row.html -->
+<div id="notification-{{ .notification.ID }}"
+     class="flex items-center gap-4 py-4 transition-opacity duration-200 [&.htmx-swapping]:opacity-0">
+  <p class="flex-1 text-sm">{{ .notification.Body }}</p>
+  <button type="button" hx-delete="/notifications/{{ .notification.ID }}"
+          hx-confirm="{{ t .lang "notifications.delete_confirm" }}"
+          hx-target="#notification-{{ .notification.ID }}" hx-swap="outerHTML swap:200ms"
+          class="btn-danger">{{ t .lang "common.delete" }}</button>
+</div>
+```
+
+`swap:200ms` holds the `htmx-swapping` class for the length of the fade, which
+the arbitrary variant turns into `opacity-0`.
+
+### Dependent selects
+
+```html
+<label for="country" class="label">{{ t .lang "address.country" }}</label>
+<select id="country" name="country" class="select"
+        hx-get="/regions" hx-trigger="change" hx-target="#region">
+  <option value="">{{ t .lang "address.choose_country" }}</option>
+  {{ range .countries }}<option value="{{ .Code }}">{{ .Name }}</option>{{ end }}
+</select>
+
+<label for="region" class="label mt-4">{{ t .lang "address.region" }}</label>
+<select id="region" name="region" class="select">
+  <option value="">{{ t .lang "address.choose_region" }}</option>
+</select>
+```
+
+`/regions` returns only `<option>` elements; the default `innerHTML` swap
+replaces the list.
+
+### Modal loaded by HTMX
+
+HTMX fetches the content; Alpine owns open and closed. The `modal` component
+and shell are in [frontend.md](frontend.md#modal).
+
+```html
+<button type="button" hx-get="/notifications/new" hx-target="#modal-body" class="btn-primary">
+  {{ t .lang "notifications.new" }}
+</button>
+```
+
+```go
+func NewNotificationForm(c *gin.Context) {
+	c.Header("HX-Trigger-After-Swap", "open-modal") // after: the focus trap needs the form in place
+	c.HTML(http.StatusOK, "notifications/_form.html", gin.H{"lang": i18n.GetLang(c)})
 }
-.htmx-request .htmx-indicator {
-  display: inline-block;
+```
+
+The swapped-in form starts with `<h2 id="modal-title">`, which the dialog's
+`aria-labelledby` points at. When it is submitted successfully, respond with
+`trigger(c, map[string]any{"close-modal": map[string]any{}, "toast": …})`,
+which the `modal` component hears as `@close-modal.window`.
+
+---
+
+## Loading States
+
+The indicator rules HTMX would have injected live in `input.css`:
+
+```css
+/* internal/assets/input.css (continued) */
+@layer components {
+  .htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; }
+  .htmx-request .htmx-indicator,
+  .htmx-request.htmx-indicator { opacity: 1; }
 }
-</style>
+```
+
+Opacity rather than `display: none`, so a spinner reserves its space and the
+button does not change width mid-request.
+
+### Spinner and disable during the request
+
+```html
+<button type="submit" class="btn-primary" hx-post="/settings" hx-disabled-elt="this">
+  <span class="htmx-indicator inline-block size-4 animate-spin rounded-full border-2
+               border-current border-t-transparent" aria-hidden="true"></span>
+  {{ t .lang "common.save_changes" }}
+</button>
+```
+
+`hx-disabled-elt` prevents the double submit; the spinner tells the reader why
+the button stopped responding.
+
+### Skeleton
+
+```html
+<div hx-get="/dashboard/stats" hx-trigger="load" aria-busy="true">
+  <div class="h-4 w-full animate-pulse rounded bg-slate-200 dark:bg-slate-700"></div>
+  <div class="mt-2 h-4 w-2/3 animate-pulse rounded bg-slate-200 dark:bg-slate-700"></div>
+</div>
 ```
 
 ---
 
 ## Error Handling
 
-### Pattern 1: Error Partial
+**HTMX 2 does not swap 4xx or 5xx responses by default.** A handler that
+answers a failed validation with `400` and an error partial renders nothing:
+the partial is discarded and the reader sees no change. The configuration
+above settles the policy in one place:
+
+| Status | Swapped | Meaning |
+|--------|---------|---------|
+| 2xx, 3xx | yes | Success |
+| 204 | no | Success, nothing to show |
+| **422** | **yes** | Validation failed; the response is the form with its errors |
+| other 4xx, 5xx | no | Failure; the reader is told by a toast |
+
+So: **validation errors are 422 and re-render the form; every other failure
+sets a toast and is not swapped.** Never return 400 with a partial you expect
+to see.
+
+### The error helper
 
 ```go
-func handleHTMXError(c *gin.Context, err error) {
-  log := logger.FromContext(c)
-  lang := i18n.GetLang(c)
+// internal/controllers/errors.go
+package controllers
 
-  var appErr *errors.AppError
-  if !stderrors.As(err, &appErr) {
-    appErr = errors.Wrap(err, errors.CodeUnknown, "unexpected error")
-  }
+import (
+	stderrors "errors"
+	"net/http"
 
-  log.Error().Str("code", appErr.Code).Err(appErr.Err).Msg(appErr.Message)
+	"github.com/gin-gonic/gin"
 
-  message := i18n.T(lang, "errors."+appErr.Code)
+	apperrors "yourapp/internal/platform/errors"
+	"yourapp/internal/platform/i18n"
+	"yourapp/internal/platform/logger"
+)
 
-  // HTMX request: return error partial
-  if isHTMX(c) {
-    c.HTML(appErr.HTTPStatus(), "partials/_error.html", gin.H{
-      "code": appErr.Code,
-      "message": message,
-    })
-    return
-  }
+func renderError(c *gin.Context, err error) {
+	lang := i18n.GetLang(c)
 
-  // Regular request: full error page
-  c.HTML(appErr.HTTPStatus(), "error.html", gin.H{
-    "code": appErr.Code,
-    "message": message,
-  })
+	var appErr *apperrors.AppError
+	if !stderrors.As(err, &appErr) {
+		appErr = &apperrors.AppError{Code: apperrors.CodeUnknown, Message: "unexpected error", Err: err}
+	}
+	status := appErr.HTTPStatus()
+
+	log := logger.Get()
+	if status >= http.StatusInternalServerError {
+		log.Error().Str("code", appErr.Code).Err(err).Msg(appErr.Message)
+	} else {
+		log.Warn().Str("code", appErr.Code).Err(err).Msg(appErr.Message)
+	}
+
+	message := i18n.T(lang, "errors."+appErr.Code) // never the internal message
+	if isHTMX(c) {
+		toast(c, "error", message)
+		c.Status(status) // not swapped: the toast is the whole response
+		return
+	}
+	c.HTML(status, "errors/error.html", gin.H{"lang": lang, "message": message})
 }
 ```
 
-Error partial:
+### Failures the server did not explain
 
-```html
-<!-- views/partials/_error.html -->
-<div class="alert alert-danger alert-dismissible fade show" role="alert">
-  <strong>Error:</strong> {{ .message }}
-  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-</div>
+A panic recovered by `gin.Recovery()`, a proxy's 502, or a dropped connection
+arrives with no `HX-Trigger`. `app.js` catches those and shows the generic
+message the layout put on `<body>`, so a failed request is never silent:
+
+```js
+// internal/assets/static/js/app.js (continued)
+function requestFailed(event) {
+  const xhr = event.detail.xhr;
+  if (xhr && xhr.getResponseHeader('HX-Trigger')) return; // the server sent its own toast
+  window.dispatchEvent(new CustomEvent('toast', {
+    detail: { level: 'error', message: document.body.dataset.errorMessage },
+  }));
+}
+document.addEventListener('htmx:responseError', requestFailed); // unswapped 4xx/5xx
+document.addEventListener('htmx:sendError', requestFailed);     // network failure
 ```
 
-### Pattern 2: Toast on Error
+The message comes from the catalog through `data-error-message`, so even this
+fallback is translated.
+
+### Field-level validation
+
+```html
+<label for="email" class="label">{{ t .lang "user.email" }}</label>
+<input id="email" type="email" name="email" class="input mt-1"
+       aria-describedby="email-error"
+       hx-post="/validate/email" hx-trigger="blur changed" hx-target="#email-error">
+<p id="email-error" class="form-error" aria-live="polite"></p>
+```
 
 ```go
-func UpdateSetting(c *gin.Context) {
-  // ... validation fails ...
-
-  if isHTMX(c) {
-    c.Header("HX-Trigger", `{"showToast": {"type": "danger", "message": "Invalid input"}}`)
-    c.HTML(400, "partials/_form_errors.html", gin.H{"errors": errors})
-    return
-  }
-
-  // ...
+func ValidateEmail(c *gin.Context) {
+	lang := i18n.GetLang(c)
+	key := models.ValidateEmail(c.PostForm("email")) // "" or a catalog key
+	if key == "" {
+		c.String(http.StatusOK, "")
+		return
+	}
+	c.String(http.StatusOK, i18n.T(lang, key)) // plain text into a <p>: nothing to escape into
 }
 ```
 
-### Pattern 3: Form Validation Errors
-
-```html
-<!-- Form with inline errors -->
-<form hx-post="/profile">
-  <div class="mb-3">
-    <label for="name" class="form-label">Name</label>
-    <input
-      type="text"
-      id="name"
-      name="name"
-      class="form-control {{ if .errors.name }}is-invalid{{ end }}"
-      value="{{ .user.Name }}">
-    {{ if .errors.name }}
-      <div class="invalid-feedback">{{ .errors.name }}</div>
-    {{ end }}
-  </div>
-
-  <button type="submit" class="btn btn-primary">Save</button>
-</form>
-```
-
----
-
-## Real-World Examples
-
-### Example 1: Settings Management
-
-**Features:**
-- Display all user settings (theme, language, timezone, notifications)
-- Inline editing with instant updates
-- Different input types (select, toggle, text)
-- Delete settings with confirmation
-- Toast notifications on save/delete
-
-**Key Routes:**
-```go
-protected.GET("/settings", ShowSettings)
-protected.POST("/settings", UpdateSetting)       // Upsert
-protected.DELETE("/settings/:key", DeleteSetting)
-```
-
-**HTMX Highlights:**
-- `hx-post` on blur for text inputs (auto-save)
-- `hx-post` on change for selects/toggles (instant update)
-- `hx-target` and `hx-swap` for seamless row replacement
-- `HX-Trigger` header for toast notifications
-
-### Example 2: Notification Center
-
-**Features:**
-- List notifications with infinite scroll
-- Mark as read (instant visual update)
-- Delete notification (fade out animation)
-- Filter by unread/all
-- Real-time search
-
-**Key Routes:**
-```go
-protected.GET("/notifications", ListNotifications)
-protected.PATCH("/notifications/:id/read", MarkNotificationRead)
-protected.DELETE("/notifications/:id", DeleteNotification)
-protected.GET("/notifications/search", SearchNotifications)
-```
-
-**HTMX Highlights:**
-- `hx-trigger="revealed"` for infinite scroll
-- `hx-trigger="keyup changed delay:300ms"` for search
-- `hx-swap="outerHTML swap:1s"` for delete animation
-- Conditional rendering (read vs unread styles)
-
-### Example 3: Live Search
-
-```html
-<!-- Search input -->
-<input
-  type="search"
-  name="q"
-  placeholder="Search..."
-  hx-get="/search"
-  hx-trigger="keyup changed delay:300ms"
-  hx-target="#results"
-  class="form-control">
-
-<!-- Results container -->
-<div id="results">
-  <!-- HTMX populates this -->
-</div>
-```
-
-Controller:
-
-```go
-func Search(c *gin.Context) {
-  query := c.Query("q")
-
-  if query == "" {
-    c.HTML(200, "search/_empty.html", nil)
-    return
-  }
-
-  results, err := models.Search(c.Request.Context(), query)
-  if err != nil {
-    handleError(c, err)
-    return
-  }
-
-  c.HTML(200, "search/_results.html", gin.H{"results": results})
-}
-```
+The check returns **200**: a field that fails validation is an answer, not an
+error, and the message has to be swapped in to be seen. `c.String` writes
+`text/plain`; HTMX inserts it as markup, so the catalog text must not contain
+HTML — keep catalog entries as plain text.
 
 ---
 
 ## Best Practices
 
-### Do's
+**Do**
 
-- **Use partials** for reusable components (`_setting_row.html`)
-- **Detect HTMX requests** and respond with partials
-- **Return full pages** for non-HTMX clients (progressive enhancement)
-- **Use semantic HTML** (buttons, forms, anchors)
-- **Add loading indicators** (`htmx-indicator` class)
-- **Debounce search** (`delay:300ms`)
-- **Confirm destructive actions** (`hx-confirm`)
-- **Use HX-Trigger** for client-side events (toasts, etc.)
-- **Test without JavaScript** (forms should still work)
+- Return a partial to HTMX and a full page otherwise, from the same templates.
+- Give every form a real `method` and `action`.
+- Use 422 for validation errors and re-render the form.
+- Raise toasts with `HX-Trigger`, built by `trigger`, with catalog text.
+- Debounce search (`delay:300ms`) and confirm destructive actions
+  (`hx-confirm`, translated).
+- Disable the submitting control (`hx-disabled-elt`) and show an indicator.
+- Use `hx-push-url` where a swap changes what the page is.
 
-### Don'ts
+**Do not**
 
-- **Don't return JSON** from HTMX endpoints (return HTML)
-- **Don't write custom JavaScript** unless absolutely necessary
-- **Don't nest HTMX attributes** deeply (keep it simple)
-- **Don't over-optimize** (HTMX is fast, full page reloads are fine for some actions)
-- **Don't ignore errors** (always handle and show user feedback)
-- **Don't break browser history** (use `hx-push-url` when appropriate)
-
-### Performance Tips
-
-- Use `hx-swap="outerHTML swap:1s"` for smooth transitions
-- Debounce search and autocomplete (`delay:300ms`)
-- Use `hx-trigger="revealed"` for infinite scroll (load on scroll)
-- Return minimal HTML (partials, not full pages)
-- Cache static assets (htmx.min.js)
-
-### Accessibility
-
-- Use semantic HTML (`<button>`, `<form>`, `<a>`)
-- Add ARIA labels where needed
-- Ensure keyboard navigation works
-- Announce dynamic content changes (ARIA live regions)
-- Test with screen readers
+- Return JSON from an HTMX endpoint.
+- Return 400 with a partial you expect to be swapped.
+- Use `hx-on`, `js:` values or trigger filters: the CSP blocks them.
+- Interpolate Go values into `hx-vals` JSON; use inputs.
+- Put state that must survive a swap inside the swapped element
+  ([frontend.md](frontend.md#alpine--htmx)).
+- Leave a live region off content that changes without navigation.
 
 ---
 
-**Next:** See [frontend.md](frontend.md) for Bootstrap UI patterns
+**Next:** [Frontend](frontend.md) | [Mobile Navigation](mobile-navigation.md) | [Security](core/security.md)

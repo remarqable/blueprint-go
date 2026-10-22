@@ -140,7 +140,7 @@ func TestRetryableVersusTerminalFailure(t *testing.T) {
 	require.NoError(t, w.Execute(ctx, j2))
 
 	// Fresh destination: reusing `got` would carry its primary key into the
-	// conditions and silently find nothing. See patterns/database.md.
+	// conditions and silently find nothing. See patterns/core/database.md.
 	var dead jobs.Job
 	require.NoError(t, g.First(&dead, j2.ID).Error)
 	assert.Equal(t, jobs.StatusDead, dead.Status, "terminal failure must not retry")

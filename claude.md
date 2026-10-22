@@ -13,12 +13,22 @@ menu of alternatives to blend. Reading a layer that does not apply produces code
 that does not compile, or worse, compiles and is wrong.
 
 1. Establish the [Project Configuration](#project-configuration) below.
-2. Read **all of the core patterns** — they apply to every project.
+2. Read **all of `patterns/core/`** — it applies to every project.
 3. Read a **layer doc only when its condition is met.**
 
 **Never read both branches of the same decision in one session.** If
-`tenancy: personal`, do not open the multi-tenancy section at all — not for
+`tenancy: personal`, do not open `patterns/tenancy.md` at all — not for
 reference, not for context.
+
+| Layer doc | Read only when |
+|-----------|----------------|
+| `patterns/tenancy.md` | `tenancy: shared` |
+| `patterns/jobs.md` | `jobs: true` |
+| `patterns/realtime.md` | `realtime: true` |
+| `patterns/ai.md` | `ai: true` (requires `jobs: true`) |
+| `patterns/frontend.md`, `patterns/htmx.md`, `patterns/mobile-navigation.md` | `frontend: server` |
+| `patterns/embed.md` | `deploy: binary` |
+| `patterns/scale.md` | the dominant table is large |
 
 `skills/` is not a layer and has no condition. It holds procedures rather than
 patterns, and [`skills/blueprint-go-audit`](skills/blueprint-go-audit/SKILL.md)
@@ -41,7 +51,7 @@ database:  postgres   # postgres | sqlite
 realtime:  false      # true | false
 jobs:      false      # true | false
 ai:        false      # true | false
-frontend:  server     # server (Gin + HTMX) | api (JSON only)
+frontend:  server     # server (Gin templates + HTMX + Tailwind/Alpine) | api (JSON only)
 deploy:    binary     # binary (systemd) | docker
 ```
 
@@ -98,7 +108,7 @@ go mod init github.com/yourorg/yourapp
 
 mkdir -p cmd/api
 mkdir -p internal/{platform,models,controllers,middleware}
-mkdir -p views/{layouts,partials,users,settings} static/{css,js,img}
+mkdir -p internal/assets/{views/{layouts,partials,pages},static/{css,js,img}}   # frontend: server
 mkdir -p lang migrations config
 
 # jobs: true
@@ -117,6 +127,20 @@ go get gorm.io/driver/postgres   # database: postgres
 go get gorm.io/driver/sqlite     # database: sqlite
 go install github.com/pressly/goose/v3/cmd/goose@latest
 ```
+
+With `frontend: server`, the frontend assets come next. There is no npm: Tailwind
+is a standalone binary the Makefile downloads, and htmx and Alpine are vendored
+files.
+
+```bash
+make css      # downloads the Tailwind standalone binary, builds app.css
+make assets   # vendors htmx, @alpinejs/csp, @alpinejs/focus
+echo ".bin/" >> .gitignore
+```
+
+`internal/assets/input.css` holds the design tokens and the component layer —
+see [frontend.md](patterns/frontend.md#design-tokens). Commit the built
+`internal/assets/static/css/app.css`; `go build` embeds it.
 
 ### Step 3: Database and roles
 
@@ -162,21 +186,21 @@ EOF
 | File | Source |
 |------|--------|
 | `internal/platform/config/config.go` | [§ Configuration](#configuration) |
-| `internal/platform/db/db.go` | [database.md](patterns/database.md#connection-management) |
+| `internal/platform/db/db.go` | [database.md](patterns/core/database.md#connection-management) |
 | `internal/platform/db/tenant.go` | [tenancy.md](patterns/tenancy.md#setting-the-tenant) — `tenancy: shared` |
 | `internal/platform/logger/logger.go` | [§ Logging](#logging) |
 | `internal/platform/errors/errors.go` | [§ Error Handling](#error-handling) |
-| `internal/platform/obs/ctx.go` | [observability.md](patterns/observability.md#correlation) |
-| `internal/platform/i18n/i18n.go` | [i18n.md](patterns/i18n.md) |
-| `internal/platform/auth/session.go` | [auth.md](patterns/auth.md) |
+| `internal/platform/obs/ctx.go` | [observability.md](patterns/core/observability.md#correlation) |
+| `internal/platform/i18n/i18n.go` | [i18n.md](patterns/core/i18n.md) |
+| `internal/platform/auth/session.go` | [auth.md](patterns/core/auth.md) |
 | `internal/platform/jobs/` | [jobs.md](patterns/jobs.md) — `jobs: true` |
 | `internal/platform/ai/` | [ai.md](patterns/ai.md) — `ai: true` |
 
 ### Step 6: First model, controller, view
 
-- `internal/models/user.go` → [mvc.md](patterns/mvc.md#models-fat-models)
-- `internal/controllers/router.go` → [mvc.md](patterns/mvc.md#controllers-thin-controllers)
-- `views/layouts/base.html` → [mvc.md](patterns/mvc.md#views-templates)
+- `internal/models/user.go` → [mvc.md](patterns/core/mvc.md#models-fat-models)
+- `internal/controllers/router.go` → [mvc.md](patterns/core/mvc.md#controllers-thin-controllers)
+- `internal/assets/views/layouts/base.html` → [mvc.md](patterns/core/mvc.md#views-templates), [frontend.md](patterns/frontend.md)
 - `cmd/api/main.go` → [§ Application Startup](#application-startup)
 
 ### Step 7: Run
@@ -193,7 +217,8 @@ Verify: `curl localhost:8000/healthz` returns `{"status":"ok"}`.
 
 - **Keep it simple, explicit, and local.** No magic, no over-engineering.
 - **MVC**: fat models, thin controllers, dumb templates.
-- **Server-rendered HTML + HTMX.** No SPA, no build pipeline.
+- **Server-rendered HTML + HTMX, Alpine for behaviour.** No SPA, no npm. The
+  only build step is `make css`, and its output is committed.
 - **Safe by default.** Tenant isolation is enforced in one place, by the
   database. Security that depends on remembering is not security.
 - **Slow work is a job.** Nothing that calls a third party blocks a request.
@@ -252,7 +277,7 @@ applies.
 | Database | PostgreSQL 15+, or SQLite | JSONB, FTS, RLS, `pgvector`, `SKIP LOCKED` on Postgres; SQLite for dev and single-tenant |
 | ORM | GORM | Type-safe, one API across both engines |
 | Templates | html/template | Auto-escaping, embedded |
-| Frontend | Bootstrap 5 + HTMX | No build step, progressive enhancement |
+| Frontend | Tailwind CSS v4 + Alpine.js (CSP build) + HTMX | Standalone Tailwind binary, no npm; strict CSP; progressive enhancement |
 | i18n | JSON catalogs | Simple, runtime-loaded |
 | Logging | zerolog | Structured, fast |
 | Migrations | goose | Simple, SQL-based, runs at deploy |
@@ -290,9 +315,11 @@ measurements say so. See [scale.md § What Not to Do Yet](patterns/scale.md#what
 - All user-visible strings in i18n catalogs
 
 ### Frontend
-- Bootstrap 5; do not invent custom classes
-- HTMX for interactivity; one `app.css` for brand overrides
-- No npm, webpack, or vite
+- Tailwind utilities in the markup, plus a thin component layer in
+  `input.css` (buttons, inputs, cards); see [frontend.md](patterns/frontend.md)
+- HTMX for server interaction, Alpine (CSP build) for behaviour; Alpine
+  components live in `static/js/app.js`
+- No npm, webpack, or vite; `make css` after touching a template
 
 ---
 
@@ -357,7 +384,7 @@ func Get() *zerolog.Logger { return &logger }
 ```
 
 Bind the trace context rather than reading fields ad hoc — see
-[observability.md](patterns/observability.md#logging).
+[observability.md](patterns/core/observability.md#logging).
 
 ---
 
@@ -452,7 +479,7 @@ func main() {
   }
 
   // Migrations are NOT run here: N instances would race the same upgrade on
-  // boot. They run once, at deploy, as app_owner. See patterns/deployment.md.
+  // boot. They run once, at deploy, as app_owner. See patterns/core/deployment.md.
 
   i18n.Preload("en")
   srv := &http.Server{
@@ -481,19 +508,20 @@ func main() {
 
 ## Pattern Index
 
-### Core — read all of these
+### Core — read all of these (`patterns/core/`)
 
 | Doc | Covers |
 |-----|--------|
-| [mvc.md](patterns/mvc.md) | Models, views, controllers in detail |
-| [database.md](patterns/database.md) | Conventions, migrations, JSONB, FTS, indexes |
-| [data-modeling.md](patterns/data-modeling.md) | Evidence vs derivation, temporal data, graph shapes |
-| [auth.md](patterns/auth.md) | Magic links, OAuth, sessions |
-| [security.md](patterns/security.md) | CSRF, rate limiting, checklist |
-| [testing.md](patterns/testing.md) | Unit, integration, isolation tests |
-| [observability.md](patterns/observability.md) | Correlation IDs, logging, metrics, alerting |
-| [i18n.md](patterns/i18n.md) | Internationalization |
-| [deployment.md](patterns/deployment.md) | Production deployment, graceful shutdown |
+| [mvc.md](patterns/core/mvc.md) | Models, views, controllers in detail |
+| [database.md](patterns/core/database.md) | Conventions, migrations, JSONB, FTS, indexes |
+| [data-modeling.md](patterns/core/data-modeling.md) | Evidence vs derivation, temporal data, graph shapes |
+| [auth.md](patterns/core/auth.md) | Magic links, OAuth, sessions |
+| [security.md](patterns/core/security.md) | CSRF, rate limiting, checklist |
+| [testing.md](patterns/core/testing.md) | Unit, integration, isolation tests |
+| [observability.md](patterns/core/observability.md) | Correlation IDs, logging, metrics, alerting |
+| [i18n.md](patterns/core/i18n.md) | Internationalization |
+| [deployment.md](patterns/core/deployment.md) | Production deployment, graceful shutdown, the "be right back" page, request profiling (admin Info box) |
+| [audit.md](patterns/core/audit.md) | Record audit: `created_by` / `updated_by` |
 
 ### Layers — read only when the condition holds
 
@@ -503,8 +531,9 @@ func main() {
 | [jobs.md](patterns/jobs.md) | `jobs: true` | Durable queue, retries, idempotency, workers |
 | [realtime.md](patterns/realtime.md) | `realtime: true` | Connections, fanout, ordering, resume |
 | [ai.md](patterns/ai.md) | `ai: true` | Providers, structured output, provenance, cost, evals |
-| [frontend.md](patterns/frontend.md) | `frontend: server` | Bootstrap + HTMX, accessibility |
+| [frontend.md](patterns/frontend.md) | `frontend: server` | Tailwind v4 + Alpine.js, component layer, visual rules, accessibility |
 | [htmx.md](patterns/htmx.md) | `frontend: server` | Interactive patterns |
+| [mobile-navigation.md](patterns/mobile-navigation.md) | `frontend: server` | Responsive navigation |
 | [embed.md](patterns/embed.md) | `deploy: binary` | Single-binary asset embedding |
 | [scale.md](patterns/scale.md) | The dominant table is large | Pagination, partitioning, pooling, caching |
 
@@ -613,7 +642,27 @@ list: nothing errors, nothing logs, and the damage is discovered late.
 
 **Frontend** (`frontend: server`)
 - All user-visible strings in i18n catalogs.
-- Every interactive component carries its own ARIA.
+- Every interactive component carries its own ARIA; Tailwind ships none.
+- Run `make css` after touching any template and commit `app.css`; CI runs
+  `make css-check`. An uncompiled class renders unstyled in production and
+  nowhere else.
+- Logical properties (`ms-`/`me-`/`ps-`/`pe-`/`text-start`), never
+  `ml-`/`mr-`/`text-left`. Physical properties silently break RTL.
+- Alpine's CSP build: every Alpine value is a name defined with `Alpine.data`.
+  An inline expression silently does nothing.
+- No inline `<script>`, `style=`, `on*=` or `hx-on`. The CSP blocks them in
+  production only.
+- Validation errors return 422 and are swapped; htmx 2 discards the body of
+  every other 4xx/5xx, so those failures become a toast.
+
+**Deployment**
+- Migrations run before the restart and must work with the previous release
+  still running: a rollback restores the binary, not the schema.
+- `Server-Timing` and the request-profiling Info box go to platform admins only,
+  never to tenant admins or users.
+- `created_by_user_id` / `updated_by_user_id` are set from the authenticated
+  actor only, never from request input. See
+  [audit.md](patterns/core/audit.md).
 
 **Verification**
 - Every implementation ends with the
@@ -658,6 +707,7 @@ gofmt -l .
 go vet ./...
 go build ./...
 go test ./... -race -cover
+make css-check   # frontend: server — the committed app.css matches the templates
 ```
 Then the [blueprint audit](#verification-every-change-is-audited). These commands
 prove the code compiles and passes; they cannot prove it conforms, because every
@@ -675,7 +725,14 @@ builds it. If a pattern here stops compiling, that build fails.
 ```makefile
 APP=yourapp
 
-.PHONY: run build test fmt migrate worker gateway skills
+.PHONY: run build test fmt migrate migrate-status worker gateway skills css css-watch css-check assets
+
+# frontend: server — see patterns/frontend.md § The Build Step
+ASSETS           := internal/assets
+TAILWIND_VERSION := v4.1.14
+TAILWIND_BIN     := .bin/tailwindcss
+HTMX_VERSION     := 2.0.4
+ALPINE_VERSION   := 3.14.9
 
 run:
 	export $$(cat config/local.env | xargs) && go run ./cmd/${APP:-api}
@@ -700,6 +757,37 @@ migrate:
 
 migrate-status:
 	goose -dir migrations postgres "$${DATABASE_OWNER_URL}" status
+
+$(TAILWIND_BIN):
+	@mkdir -p .bin
+	@case "$$(uname -s)-$$(uname -m)" in \
+	  Darwin-arm64)  F=tailwindcss-macos-arm64 ;; \
+	  Darwin-x86_64) F=tailwindcss-macos-x64 ;; \
+	  Linux-aarch64) F=tailwindcss-linux-arm64 ;; \
+	  Linux-x86_64)  F=tailwindcss-linux-x64 ;; \
+	  *) echo "Unsupported platform"; exit 1 ;; \
+	esac; \
+	curl -fsSL -o $(TAILWIND_BIN) \
+	  https://github.com/tailwindlabs/tailwindcss/releases/download/$(TAILWIND_VERSION)/$$F
+	@chmod +x $(TAILWIND_BIN)
+
+css: $(TAILWIND_BIN)
+	$(TAILWIND_BIN) -i $(ASSETS)/input.css -o $(ASSETS)/static/css/app.css --minify
+
+css-watch: $(TAILWIND_BIN)
+	$(TAILWIND_BIN) -i $(ASSETS)/input.css -o $(ASSETS)/static/css/app.css --watch
+
+css-check: css
+	git diff --exit-code $(ASSETS)/static/css/app.css
+
+assets:
+	@mkdir -p $(ASSETS)/static/js
+	curl -fsSL -o $(ASSETS)/static/js/htmx.min.js \
+	  https://unpkg.com/htmx.org@$(HTMX_VERSION)/dist/htmx.min.js
+	curl -fsSL -o $(ASSETS)/static/js/alpine.min.js \
+	  https://unpkg.com/@alpinejs/csp@$(ALPINE_VERSION)/dist/cdn.min.js
+	curl -fsSL -o $(ASSETS)/static/js/alpine-focus.min.js \
+	  https://unpkg.com/@alpinejs/focus@$(ALPINE_VERSION)/dist/cdn.min.js
 
 skills:
 	@set -e; \

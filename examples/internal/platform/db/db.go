@@ -35,7 +35,7 @@ func Connect(driver, dsn string) (*gorm.DB, error) {
 		}
 		return gorm.Open(sqlite.Open(dsn), cfg)
 	case "postgres":
-		return nil, fmt.Errorf("postgres driver not wired in this example; see patterns/database.md")
+		return nil, fmt.Errorf("postgres driver not wired in this example; see patterns/core/database.md")
 	default:
 		return nil, fmt.Errorf("unknown driver %q", driver)
 	}

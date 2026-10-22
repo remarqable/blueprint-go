@@ -507,7 +507,7 @@ Tests worth writing once, at the queue level, not per handler:
 
 ## Operating It
 
-Export these from the worker (see [observability.md](observability.md)):
+Export these from the worker (see [observability.md](core/observability.md)):
 
 | Metric | Alert when |
 |---|---|
