@@ -117,6 +117,7 @@ Detailed architecture and coding standards in `patterns/`:
 - **[htmx.md](patterns/htmx.md)** - Interactive patterns (inline edit, delete, modals)
 - **[mobile-navigation.md](patterns/mobile-navigation.md)** - Responsive navigation, bottom tabs, mobile templates
 - **[embed.md](patterns/embed.md)** - Single-binary asset embedding
+- **[staging.md](patterns/staging.md)** - A second copy on the same VPS at staging.<domain>, refreshed from production
 - **[scale.md](patterns/scale.md)** - Cursor pagination, partitioning, pooling, caching
 
 ### Skills

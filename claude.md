@@ -28,6 +28,7 @@ reference, not for context.
 | `patterns/ai.md` | `ai: true` (requires `jobs: true`) |
 | `patterns/frontend.md`, `patterns/htmx.md`, `patterns/mobile-navigation.md` | `frontend: server` |
 | `patterns/embed.md` | `deploy: binary` |
+| `patterns/staging.md` | `staging: true` (requires `deploy: binary`) |
 | `patterns/scale.md` | the dominant table is large |
 
 `skills/` is not a layer and has no condition. It holds procedures rather than
@@ -53,6 +54,7 @@ jobs:      false      # true | false
 ai:        false      # true | false
 frontend:  server     # server (Gin templates + HTMX + Tailwind/Alpine) | api (JSON only)
 deploy:    binary     # binary (systemd) | docker
+staging:   false      # true | false  (deploy: binary only)
 ```
 
 ### The questions to ask
@@ -91,6 +93,14 @@ Requires `jobs: true`. See [ai.md](patterns/ai.md).
 **6. Server-rendered HTML or JSON API?** → `frontend`
 `server` gives Gin templates + HTMX with no build step. `api` drops the view
 layer entirely; skip [frontend.md](patterns/frontend.md) and [htmx.md](patterns/htmx.md).
+
+**7. Should changes be tried on the server before they reach users?** →
+`staging`. `true` adds a second copy of the service on the same VPS at
+`staging.<domain>`: its own releases, process, port, database and settings,
+routed by Caddy on the subdomain, open to admins only. Branches are deployed
+there and tried, on a copy of production's data when needed, before `main`
+goes to production. See [staging.md](patterns/staging.md). Requires
+`deploy: binary`.
 
 ---
 
@@ -536,6 +546,7 @@ func main() {
 | [htmx.md](patterns/htmx.md) | `frontend: server` | Interactive patterns |
 | [mobile-navigation.md](patterns/mobile-navigation.md) | `frontend: server` | Responsive navigation |
 | [embed.md](patterns/embed.md) | `deploy: binary` | Single-binary asset embedding |
+| [staging.md](patterns/staging.md) | `staging: true` | Second copy on the same VPS, subdomain routing, refresh from production |
 | [scale.md](patterns/scale.md) | The dominant table is large | Pagination, partitioning, pooling, caching |
 
 ### Skills — procedures to run, not patterns to read

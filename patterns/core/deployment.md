@@ -36,6 +36,9 @@ Two deployment shapes, recorded as `deploy:` in the project configuration:
   product, an on-premise install). You cannot assume their OS or init system; the
   image is the distribution artifact. See [Docker Deployment](#docker-deployment).
 
+With `staging: true`, a second copy of the service runs on the same server at
+`staging.<domain>`: see [staging.md](../staging.md).
+
 **Binary stack:**
 - **Server**: any VPS (one $12/month droplet goes a long way)
 - **Process manager**: systemd (restarts, logs, boot)
