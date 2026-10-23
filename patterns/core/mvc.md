@@ -775,8 +775,9 @@ func SetupRouter() *gin.Engine {
   }
   router.HTMLRender = renderer
 
-  // Static files, registered before CSRF so they never get a token cookie
-  router.StaticFS("/static", http.FS(assets.StaticFS()))
+  // Static files, registered before CSRF so they never get a token cookie;
+  // versioned URLs are cached a year (core/performance.md#static-files)
+  router.Group("/static", assets.CacheStatic()).StaticFS("/", http.FS(assets.StaticFS()))
 
   // CSRF on every HTML route: every page renders {{ csrf }}, the login form
   // included (security.md#csrf-protection)

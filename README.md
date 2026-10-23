@@ -104,6 +104,7 @@ Detailed architecture and coding standards in `patterns/`:
 - **[observability.md](patterns/core/observability.md)** - Correlation IDs, structured logs, metrics, alerting
 - **[i18n.md](patterns/core/i18n.md)** - Multi-language support with JSON catalogs
 - **[deployment.md](patterns/core/deployment.md)** - systemd + Caddy or Docker, the "be right back" page, request profiling, production checklist
+- **[performance.md](patterns/core/performance.md)** - N+1 is a bug, query-count tests, association loading, static file caching
 - **[audit.md](patterns/core/audit.md)** - Record audit: `created_by_user_id` / `updated_by_user_id`
 
 **Layers — read only when the project needs them:**

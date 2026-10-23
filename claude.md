@@ -521,6 +521,7 @@ func main() {
 | [observability.md](patterns/core/observability.md) | Correlation IDs, logging, metrics, alerting |
 | [i18n.md](patterns/core/i18n.md) | Internationalization |
 | [deployment.md](patterns/core/deployment.md) | Production deployment, graceful shutdown, the "be right back" page, request profiling (admin Info box) |
+| [performance.md](patterns/core/performance.md) | N+1 is a bug, query-count tests, association loading, static file caching |
 | [audit.md](patterns/core/audit.md) | Record audit: `created_by` / `updated_by` |
 
 ### Layers — read only when the condition holds

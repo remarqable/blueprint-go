@@ -366,6 +366,7 @@ which the running service should not hold. The deploy script runs them.
 }
 
 yourapp.com {
+    encode zstd gzip
     reverse_proxy localhost:8000 {
         # While the service restarts, hold the request and retry the
         # connection instead of failing at once. Caddy retries only when it
@@ -776,10 +777,13 @@ docker compose up -d
 - [ ] **"Be right back" page** installed (Caddy `handle_errors`), tested by
       stopping the service
 - [ ] **Request profiling** on: admin Info link, `Server-Timing` for admins only
+- [ ] **Static URLs** written with `asset` and cached a year
+      ([performance.md](performance.md#static-files))
 
 ### Infrastructure
 
-- [ ] **Reverse proxy** configured (Caddy, Nginx, or cloud LB)
+- [ ] **Reverse proxy** configured (Caddy, Nginx, or cloud LB), compressing
+      responses (Caddy: `encode zstd gzip`)
 - [ ] **SSL/TLS** certificates installed
 - [ ] **Firewall**: only 22, 80, 443 open
 - [ ] **Service user** is not root
@@ -939,8 +943,8 @@ type Stats struct {
 
 type ctxKey struct{}
 
-// From returns the request's Stats, or nil outside a profiled request
-// (jobs, CLI, tests, or profiling switched off).
+// From returns the request's Stats, or nil outside a profiled request (jobs,
+// CLI, or profiling switched off) unless WithStats started one.
 func From(ctx context.Context) *Stats {
   s, _ := ctx.Value(ctxKey{}).(*Stats)
   return s
@@ -961,6 +965,13 @@ func Middleware() gin.HandlerFunc {
     c.Writer = &writer{ResponseWriter: c.Writer, stats: s}
     c.Next()
   }
+}
+
+// WithStats counts queries outside a request: a test measuring a model
+// function, or a job measuring itself (performance.md).
+func WithStats(ctx context.Context) (context.Context, *Stats) {
+  s := &Stats{Start: time.Now()}
+  return context.WithValue(ctx, ctxKey{}, s), s
 }
 
 // Reveal marks the request as one whose numbers may be shown. Mount it ONLY
@@ -1023,7 +1034,7 @@ func RegisterGORM(g *gorm.DB) error {
   }
   done := func(tx *gorm.DB) {
     s := From(tx.Statement.Context)
-    if s == nil {
+    if s == nil || tx.DryRun {         // a subquery is built by a dry run: not a query
       return
     }
     if t, ok := tx.InstanceGet(startKey); ok {
@@ -1274,7 +1285,7 @@ component and no framework markup.
     <button class="btn-secondary">{{ t $.lang "common.close" }}</button>
   </form>
 </dialog>
-<script src="/static/js/sysinfo.js" defer></script>
+<script src="{{ asset "js/sysinfo.js" }}" defer></script>
 {{ end }}
 ```
 
@@ -1352,8 +1363,8 @@ connection setup) and look at queries and DB time against total time. The usual
 culprits:
 
 - **One query per row** (N+1): a list fetching each row's children one by one.
-  Fetch them for the whole page in one `WHERE id = ANY(?)` query. See
-  [scale.md § N+1](../scale.md#n1).
+  Fetch them for the whole page in one `WHERE id IN ?` query. See
+  [performance.md](performance.md#fixing-it).
 - **Loading rows to count them**: `Find(&rows)` then `len(rows)`. Use
   `Count(&n)`.
 - **Work for something folded away**: a collapsed section computed on every

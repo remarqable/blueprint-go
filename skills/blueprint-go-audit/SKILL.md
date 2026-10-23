@@ -57,7 +57,7 @@ blueprint states this as its first rule, and the reviewer must obey it too:
 
 - `patterns/core/` applies to every project. Always in scope: `mvc`, `database`,
   `data-modeling`, `auth`, `security`, `testing`, `observability`, `i18n`,
-  `deployment`, `audit`.
+  `deployment`, `audit`, `performance`.
 - A layer doc in `patterns/` is in scope **only** if its condition holds:
 
   | Doc | Condition |
@@ -110,15 +110,15 @@ diff` that may also sweep in unrelated working-tree edits.
 
 | File pattern | Brings in |
 |---|---|
-| `internal/models/*.go` | MVC, database, data-modeling, record audit, tenancy |
-| `internal/controllers/*.go` | MVC, auth, security |
+| `internal/models/*.go` | MVC, database, data-modeling, record audit, performance, tenancy |
+| `internal/controllers/*.go` | MVC, auth, security, performance |
 | `internal/middleware/*.go` | Security, auth, observability |
 | `internal/platform/db/**` | Database, tenancy |
 | `internal/platform/obs/**` | Observability |
-| `internal/jobs/**`, `cmd/worker/**` | Jobs layer |
+| `internal/jobs/**`, `cmd/worker/**` | Jobs layer, performance (jobs that loop over rows) |
 | `internal/gateway/**`, `cmd/gateway/**` | Realtime layer |
 | `internal/platform/ai/**`, `evals/**` | AI layer |
-| `views/**/*.html` | Frontend, HTMX, mobile navigation, i18n, CSRF — and check `app.css` was rebuilt |
+| `views/**/*.html` | Frontend, HTMX, mobile navigation, i18n, CSRF, performance (lookups in `range` loops, static URLs via `asset`) — and check `app.css` was rebuilt |
 | `static/css/**` | Frontend — and check `app.css` was rebuilt |
 | `internal/assets/**` | Embed layer, plus whatever the embedded views and styles bring in |
 | `migrations/*.sql` | Database, record audit, tenancy |
@@ -142,7 +142,7 @@ Everything below is relative to that path:
 - Master doc: `<blueprint>/claude.md` (lowercase)
 - Always-applicable patterns: `<blueprint>/patterns/core/` — `audit`, `auth`,
   `data-modeling`, `database`, `deployment`, `i18n`, `mvc`, `observability`,
-  `security`, `testing`
+  `performance`, `security`, `testing`
 - Layer docs: `<blueprint>/patterns/` — `ai.md`, `embed.md`, `frontend.md`,
   `htmx.md`, `jobs.md`, `mobile-navigation.md`, `realtime.md`, `scale.md`,
   `tenancy.md`
@@ -267,13 +267,14 @@ from Step 3>
 
 Which docs the changes pull in:
    Models       -> core/mvc.md, core/database.md, core/data-modeling.md,
-                   core/audit.md
-   Controllers  -> core/mvc.md, core/auth.md, core/security.md
+                   core/audit.md, core/performance.md
+   Controllers  -> core/mvc.md, core/auth.md, core/security.md,
+                   core/performance.md
    Middleware   -> core/security.md, core/auth.md, core/observability.md
    Migrations   -> core/database.md, core/audit.md
    main.go      -> core/deployment.md, core/observability.md
-   Templates    -> frontend.md, htmx.md, core/i18n.md; layouts and
-                   navigation partials also mobile-navigation.md
+   Templates    -> frontend.md, htmx.md, core/i18n.md, core/performance.md;
+                   layouts and navigation partials also mobile-navigation.md
    Tests        -> core/testing.md
 
 ## Rules
@@ -310,6 +311,10 @@ Tenancy (only if tenancy: shared):
 - An unscoped query on a tenant-scoped table is Critical, not Medium
 
 Database:
+- No query per row (N+1) anywhere that lists rows: controllers, model
+  functions, template loops, jobs. Batch lookups into a map, Joins/Preload per
+  query, counts and groups in SQL, never Preload(clause.Associations) on a list
+  (core/performance.md)
 - SQL migrations in goose, never AutoMigrate; every schema change has one
 - Migrations run at deploy as the owner, never inside application startup
 - tenant_id leads every composite index on a tenant-scoped table
@@ -412,8 +417,9 @@ The reviewer fills the conformance table using this scale, per pattern category:
 | 3+ major | 5/10 or lower |
 
 **Major** — business logic in a controller, a tenant-scoped query off
-`db.WithTenant`, a policy missing `WITH CHECK`, `AutoMigrate` in place of a goose
-migration, a schema change with no migration, a job enqueued outside its causing
+`db.WithTenant`, a query per row on a list (N+1), a policy missing `WITH CHECK`,
+`AutoMigrate` in place of a goose migration, a schema change with no migration,
+a job enqueued outside its causing
 transaction, inference in a handler, an unbounded send buffer, a missing auth
 middleware on a protected route, a missing CSRF token, SQL injection, a stale
 `app.css`, a high-cardinality Prometheus label, a violated non-negotiable.

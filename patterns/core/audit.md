@@ -428,7 +428,7 @@ table. Note the trigger fires on `UpdateColumn` too.
 ## Showing Names
 
 Load the names for the page in one query, not one per row
-([scale.md § N+1](../scale.md#n1)):
+([performance.md](performance.md#fixing-it)):
 
 ```go
 // internal/models/user.go

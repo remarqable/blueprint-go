@@ -197,35 +197,18 @@ pooled for request work, one direct for the listener.
 
 ## N+1
 
-The most common real performance bug, and it is invisible in development where
-every table has twelve rows.
+A query per row is a bug at any size, so the rule, the test that catches it and
+the fixes are in [core/performance.md](core/performance.md). What changes at
+scale is the batch query itself: a page of IDs is fine as `WHERE id IN ?`, but
+IDs collected from a large result become thousands of bind parameters. When
+they come from another query, let the database join them instead: GORM takes a
+query as the argument and writes a subquery.
 
 ```go
-// One query, then one per row.
-for _, m := range messages {
-  m.Author, _ = models.FindUser(ctx, tx, m.UserID)
-}
-
-// One query, then one more.
-ids := lo.Uniq(lo.Map(messages, func(m Message, _ int) int64 { return m.UserID }))
-authors, _ := models.UsersByIDs(ctx, tx, ids)  // WHERE id = ANY($1)
-for i := range messages {
-  messages[i].Author = authors[messages[i].UserID]
-}
+recent := db.Get().WithContext(ctx).Model(&Message{}).
+  Select("user_id").Where("channel_id = ? AND seq > ?", channelID, since)
+err := db.Get().WithContext(ctx).Where("id IN (?)", recent).Find(&authors).Error
 ```
-
-Catch it mechanically rather than by review: count queries per request in
-development and fail the test above a threshold.
-
-```go
-func TestChannelViewQueryCount(t *testing.T) {
-  n := db.CountQueries(t, func() { getChannel(t, channelID) })
-  assert.LessOrEqual(t, n, 5, "channel view should not scale with message count")
-}
-```
-
-Seed the test with 50 messages. A test with three rows passes whether or not the
-bug exists.
 
 ---
 

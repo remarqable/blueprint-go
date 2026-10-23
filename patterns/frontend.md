@@ -576,11 +576,11 @@ Template names follow [embed.md](embed.md): the path under `views/`, so
         content='{"includeIndicatorStyles":false,"allowEval":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
   <title>{{ block "title" . }}{{ t .lang "app.name" }}{{ end }}</title>
 
-  <link href="/static/css/app.css" rel="stylesheet">
-  <script defer src="/static/js/htmx.min.js"></script>
-  <script defer src="/static/js/app.js"></script>
-  <script defer src="/static/js/alpine-focus.min.js"></script>
-  <script defer src="/static/js/alpine.min.js"></script>
+  <link href="{{ asset "css/app.css" }}" rel="stylesheet">
+  <script defer src="{{ asset "js/htmx.min.js" }}"></script>
+  <script defer src="{{ asset "js/app.js" }}"></script>
+  <script defer src="{{ asset "js/alpine-focus.min.js" }}"></script>
+  <script defer src="{{ asset "js/alpine.min.js" }}"></script>
   {{ block "head" . }}{{ end }}
 </head>
 <body class="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100"

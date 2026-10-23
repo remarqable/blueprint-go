@@ -156,6 +156,7 @@ import (
 	"fmt"
 	"html/template"
 
+	"yourapp/internal/platform/buildinfo"
 	"yourapp/internal/platform/i18n"
 )
 
@@ -164,6 +165,7 @@ func funcs() template.FuncMap {
 		"t":      i18n.T,        // {{ t .lang "key" }}, core/i18n.md
 		"dict":   dict,          // several values into a partial, htmx.md
 		"csrf":   boundCSRF(""), // replaced per render by Templates.Execute
+		"asset":  asset,         // {{ asset "css/app.css" }}, core/performance.md
 		"substr": substr,
 	}
 }
@@ -197,6 +199,12 @@ func dict(kv ...any) (map[string]any, error) {
 		m[k] = kv[i+1]
 	}
 	return m, nil
+}
+
+// asset is a static file's URL, stamped with the build so browsers can keep it
+// for a year (core/performance.md#static-files).
+func asset(name string) string {
+	return "/static/" + name + "?v=" + buildinfo.Commit
 }
 
 // substr counts runes, not bytes, so "Élise" gives "É" rather than half of it.
@@ -520,7 +528,8 @@ func SetupRouter() *gin.Engine {
 	router.HTMLRender = renderer // not SetHTMLTemplate/LoadHTMLGlob: they replace it
 
 	// Registered before the CSRF middleware, so static files never get it.
-	router.StaticFS("/static", http.FS(assets.StaticFS()))
+	// CacheStatic lets browsers keep versioned URLs a year (core/performance.md).
+	router.Group("/static", assets.CacheStatic()).StaticFS("/", http.FS(assets.StaticFS()))
 
 	// Every page renders {{ csrf }}, so every HTML route needs a token.
 	router.Use(middleware.CSRF([]byte(os.Getenv("CSRF_SECRET")), os.Getenv("APP_URL")))
@@ -682,8 +691,8 @@ If you have an existing project with `views/` and `static/` at the root:
 2. Move `views/` to `internal/assets/views/`
 3. Move `static/` to `internal/assets/static/`
 4. Create `internal/assets/assets.go` (code above)
-5. Update `internal/controllers/router.go` to set `router.HTMLRender` from `assets.NewRenderer()` and serve `assets.StaticFS()`
-6. Update any hardcoded paths in templates (e.g., `/static/css/app.css` stays the same)
+5. Update `internal/controllers/router.go` to set `router.HTMLRender` from `assets.NewRenderer()` and serve `assets.StaticFS()` behind `assets.CacheStatic()`
+6. Write static URLs in templates with `asset` (`/static/css/app.css` becomes `{{ asset "css/app.css" }}`; see [core/performance.md](core/performance.md#static-files))
 
 ---
 
