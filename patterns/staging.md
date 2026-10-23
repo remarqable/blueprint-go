@@ -239,6 +239,17 @@ write into production's even by mistake. With `jobs: true`, a
 `yourapp-staging-worker.service` runs `current/yourapp-worker` the same way,
 with lower concurrency than production's.
 
+
+**Restart workers by their unit files, not a glob.** `systemctl restart
+'yourapp-staging-worker-*'` matches only units systemd has loaded, so a worker
+that has never run (just added, or just renamed) is silently skipped. List the
+enabled ones instead:
+
+```bash
+units=$(systemctl list-unit-files --no-legend 'yourapp-staging-worker-*' | awk '$2 == "enabled" {print $1}')
+systemctl restart $units
+```
+
 ---
 
 ## Caddy and DNS
