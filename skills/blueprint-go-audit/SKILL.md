@@ -69,6 +69,7 @@ blueprint states this as its first rule, and the reviewer must obey it too:
   | `frontend.md`, `htmx.md`, `mobile-navigation.md` | `frontend: server` — all three are out of scope on `frontend: api` |
   | `embed.md` | `deploy: binary` |
   | `staging.md` | `staging: true` |
+  | `admin-api.md` | `admin_api: true` |
   | `scale.md` | the dominant table is large, and the change touches its query path |
 
 - Two decisions select a section *within* a doc rather than a layer doc:
@@ -145,7 +146,7 @@ Everything below is relative to that path:
   `data-modeling`, `database`, `deployment`, `i18n`, `mvc`, `observability`,
   `performance`, `security`, `testing`
 - Layer docs: `<blueprint>/patterns/` — `ai.md`, `embed.md`, `frontend.md`,
-  `htmx.md`, `jobs.md`, `mobile-navigation.md`, `realtime.md`, `scale.md`,
+  `admin-api.md`, `htmx.md`, `jobs.md`, `mobile-navigation.md`, `realtime.md`, `scale.md`,
   `staging.md`, `tenancy.md`
 - Compiling reference: `<blueprint>/examples/` — the platform code the patterns
   are extracted from, with tests asserting what they claim
@@ -257,6 +258,7 @@ from Step 3>
        mobile-navigation.md        -> only if frontend: server
      embed.md                      -> only if deploy: binary
      staging.md                    -> only if staging: true
+     admin-api.md                  -> only if admin_api: true
      scale.md                      -> only if the dominant table is large
                                       and the change touches its query path
    If a layer is disabled, do not open its doc at all — not for reference,

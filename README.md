@@ -118,6 +118,7 @@ Detailed architecture and coding standards in `patterns/`:
 - **[mobile-navigation.md](patterns/mobile-navigation.md)** - Responsive navigation, bottom tabs, mobile templates
 - **[embed.md](patterns/embed.md)** - Single-binary asset embedding
 - **[staging.md](patterns/staging.md)** - A second copy on the same VPS at staging.<domain>, refreshed from production
+- **[admin-api.md](patterns/admin-api.md)** - API keys and a read-only metrics API for AI agents (`admin_api: true`)
 - **[scale.md](patterns/scale.md)** - Cursor pagination, partitioning, pooling, caching
 
 ### Skills

@@ -29,6 +29,7 @@ reference, not for context.
 | `patterns/frontend.md`, `patterns/htmx.md`, `patterns/mobile-navigation.md` | `frontend: server` |
 | `patterns/embed.md` | `deploy: binary` |
 | `patterns/staging.md` | `staging: true` (requires `deploy: binary`) |
+| `patterns/admin-api.md` | `admin_api: true` |
 | `patterns/scale.md` | the dominant table is large |
 
 `skills/` is not a layer and has no condition. It holds procedures rather than
@@ -55,6 +56,7 @@ ai:        false      # true | false
 frontend:  server     # server (Gin templates + HTMX + Tailwind/Alpine) | api (JSON only)
 deploy:    binary     # binary (systemd) | docker
 staging:   false      # true | false  (deploy: binary only)
+admin_api: false      # true | false
 ```
 
 ### The questions to ask
@@ -101,6 +103,13 @@ routed by Caddy on the subdomain, open to admins only. Branches are deployed
 there and tried, on a copy of production's data when needed, before `main`
 goes to production. See [staging.md](patterns/staging.md). Requires
 `deploy: binary`.
+
+**8. Will an agent or script read the app's numbers?** → `admin_api`. `true`
+adds API keys made in the admin panel and a read-only REST API at
+`/admin/api/v1`: signups, sign-ins, active people, activation, retention,
+product metrics, and (with its own scope) the people themselves. The contract is
+the remarQable spec `docs/specs/admin-api.md`. See
+[admin-api.md](patterns/admin-api.md).
 
 ---
 
@@ -547,6 +556,7 @@ func main() {
 | [mobile-navigation.md](patterns/mobile-navigation.md) | `frontend: server` | Responsive navigation |
 | [embed.md](patterns/embed.md) | `deploy: binary` | Single-binary asset embedding |
 | [staging.md](patterns/staging.md) | `staging: true` | Second copy on the same VPS, subdomain routing, refresh from production |
+| [admin-api.md](patterns/admin-api.md) | `admin_api: true` | API keys, the metric registry, the read-only API for agents |
 | [scale.md](patterns/scale.md) | The dominant table is large | Pagination, partitioning, pooling, caching |
 
 ### Skills — procedures to run, not patterns to read
