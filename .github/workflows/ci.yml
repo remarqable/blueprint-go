@@ -9,6 +9,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check internal links and anchors
         run: ./scripts/check-links.py
+      - name: Check VERSION has a matching upgrade file
+        run: ./scripts/check-version.py
 
   examples:
     # The patterns in patterns/*.md are extracted from this module. If it stops

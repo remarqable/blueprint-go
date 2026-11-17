@@ -7,7 +7,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  skills     Link blueprint skills into .claude/skills"
-	@echo "  check      Verify internal links and heading anchors"
+	@echo "  check      Verify internal links, heading anchors and version bookkeeping"
 	@echo "  examples   Build and test the examples module"
 
 skills:
@@ -38,6 +38,7 @@ skills:
 
 check:
 	./scripts/check-links.py
+	./scripts/check-version.py
 
 examples:
 	cd examples && gofmt -l . && go build ./... && go vet ./... && go test ./... -race -count=1
