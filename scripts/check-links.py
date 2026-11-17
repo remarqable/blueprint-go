@@ -49,6 +49,7 @@ def main():
         [p for p in ROOT.glob("*.md")]
         + [p for p in ROOT.glob("patterns/**/*.md")]
         + [p for p in ROOT.glob("skills/**/*.md")]
+        + [p for p in ROOT.glob("upgrades/**/*.md")]
     )
     if not docs:
         print("no markdown files found", file=sys.stderr)

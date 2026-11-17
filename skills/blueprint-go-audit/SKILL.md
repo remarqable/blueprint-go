@@ -181,6 +181,17 @@ Evidence to look for:
 `scale.md` is a judgement, not a flag: it applies when the dominant table is
 large. Say which way you judged it.
 
+**Blueprint version.** Read `<blueprint>/VERSION` and the project's
+`blueprint_version` (recorded with its configuration answers). Print both above
+the report. If the project is behind, or records no version, read the files in
+`<blueprint>/upgrades/` that are newer than the project's version and pass the
+changes they name to the reviewer with this instruction: a finding that exists
+only because of one of those changes, or because of a step listed under the
+project's `blueprint_skipped`, is reported as **Low** and labelled
+`pending upgrade <version>`. It does not block. Critical findings are never
+downgraded this way: a security or tenant-isolation hole blocks whatever version
+the project is on.
+
 ### Step 3: Run the Mechanical Checks First
 
 Unlike the Python blueprint, this one ships real mechanical checks. Run them

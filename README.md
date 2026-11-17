@@ -64,14 +64,20 @@ blueprint your project was built against cannot change under you.
 # Pin to the current commit during setup (this is what `git submodule add` does)
 cd .. && git add blueprint && git commit -m "Pin the blueprint"
 
-# Move to a newer one deliberately, and read what changed first
-cd blueprint && git fetch && git log --oneline HEAD..origin/main
-cd blueprint && git checkout <commit>
-cd .. && git add blueprint && git commit -m "Update the blueprint to <commit>"
+# Move to a newer version deliberately
+cd blueprint && git fetch --tags && git checkout v1.0.0
+cd .. && git add blueprint && git commit -m "Update the blueprint to 1.0.0"
+# then ask the agent: "upgrade to the new blueprint version"
 ```
 
-No version tags are published yet, so pin by commit and move deliberately when
-you update.
+[`VERSION`](VERSION) names the current version, and each version is tagged
+`v<version>`. A project records the one it was built against as
+`blueprint_version` in its own `claude.md`.
+
+[upgrades/](upgrades/README.md) holds one short file per version with the steps
+a project takes to reach it, applied in order like migrations. Patch and minor
+versions need no action; a major version says exactly what to change. The agent
+never upgrades unprompted.
 
 ---
 
@@ -248,22 +254,6 @@ See [patterns/tenancy.md](patterns/tenancy.md) for the full guide.
 - **No npm** - Tailwind is a standalone binary; `make css` builds the stylesheet and the output is committed
 - **Utilities first** - Tailwind utilities in the markup, a thin component layer for what repeats
 - **Progressive enhancement** - Works without JavaScript
-
----
-
-## 🚢 Updating Blueprint Version
-
-When using as a git submodule, pin to specific versions:
-
-```bash
-# In your project with the blueprint submodule
-cd blueprint
-git fetch
-git checkout <commit>
-cd ..
-git add blueprint
-git commit -m "Update the blueprint to <commit>"
-```
 
 ---
 
